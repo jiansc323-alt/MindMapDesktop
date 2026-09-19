@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+.DS_Store
+
+# 本地测试数据(含个人笔记内容,不入库)
+/123.smm
+/12345.smm

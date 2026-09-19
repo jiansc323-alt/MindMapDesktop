@@ -1,0 +1,18 @@
+appId: com.opensource.mindmapdesktop
+productName: MindMapDesktop
+copyright: Copyright (c) 2026 MindMap Desktop contributors
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD-PARTY-NOTICES.md
+    to: THIRD-PARTY-NOTICES.md
+win:
+  target:
+    - portable
+portable:
+  artifactName: ${productName}-portable-${version}.exe
