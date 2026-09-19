@@ -1,7 +1,7 @@
 {
   "name": "mind-map-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "开源 Windows 免安装思维导图客户端(基于 simple-mind-map 核心库)",
   "license": "MIT",
   "author": "MindMap Desktop contributors",

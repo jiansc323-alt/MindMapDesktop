@@ -25,6 +25,7 @@
 │  │  ├─ Sidebar.vue     # 左侧"最近打开"侧边栏,可隐藏,双击打开
 │  │  ├─ NoteSidebar.vue # 右侧"节点备注"侧边栏,可隐藏,编辑当前选中节点备注
 │  │  ├─ FormatPanel.vue # 格式面板:选中节点的字体/字号/颜色/填充/边框编辑(支持多选批量)
+│  │  ├─ SaveBanner.vue  # 写盘失败提示条(重试保存 / 另存为副本 / 明确丢弃后切换)
 │  │  └─ ContextMenu.vue # 节点右键菜单(标记/取消"已完成")
 │  └─ composables/
 │     ├─ useMindMap.ts   # MindMap 实例封装、插件注册、备注图标/节点后置内容选项、默认数据
@@ -64,6 +65,7 @@
 | 文件 | 另存为 | Ctrl+Shift+S | `saveAs` |
 | 文件 | 导出为 ▾ | PNG / JPG / SVG / PDF / Markdown / XMind / OPML | PNG 为 Ctrl+E | `export:png` … `export:opml` |
 | 文件 | 最近打开 | — | 子菜单,点击打开对应文件 |
+| 文件 | 打开快照文件夹 | — | `shell.openPath(userData/snapshots)` |
 | 编辑 | 撤销 / 重做 | Ctrl+Z / Ctrl+Y | `undo` / `redo` |
 | 编辑 | 添加/编辑备注 | Ctrl+T | `addNote`(打开右侧备注栏) |
 | 视图 | 适应画布 / 放大 / 缩小 / 重置 | Ctrl+0 / Ctrl+= / Ctrl+- | `fit` / `zoomIn` / `zoomOut` / `reset` |
@@ -80,7 +82,12 @@
 ### 2.4 文件 IPC(主进程侧)
 - `dialog:open`(invoke):打开对话框,可选传入 `filters`(导入入口按 `.md/.xmind/.opml` 过滤;不传则用 `OPEN_FILTERS`,含 `smm/json/md/xmind/opml/所有文件`),返回 `{ canceled, filePath, buffer }`。
 - `file:read`(invoke):按路径读文件,返回 `{ filePath, buffer }`(供最近打开/启动恢复/拖拽/导入复用)。
-- `file:save`(invoke):`filePath` 为空时弹保存对话框(标题/默认名/`filters` 由渲染层给出);按 `encoding`(`utf8` | `base64`)写盘,返回 `{ canceled, filePath }`。
+- `file:save`(invoke):`filePath` 为空时弹保存对话框(标题/默认名/`filters` 由渲染层给出);按 `encoding`(`utf8` | `base64`)写盘。
+  返回三态:成功 `{ canceled:false, filePath }`、用户取消 `{ canceled:true }`、**写不进去 `{ canceled:false, filePath, error }`**
+  —— 失败必须与"取消"可区分,否则渲染层会把写失败当成"用户不想存"而静默丢改动;失败也带 `filePath`,重试不必再弹框。
+- **快照**:上面第一种(渲染层直接给出 `filePath`、且不带 `filters` 的文档保存)成功后,把同一份内容再写一份到
+  `userData/snapshots/<路径 sha1 前 12 位>/<ISO 时间戳>.smm`,按字典序(即时间序)只保留最近 20 份;
+  `file:save-sync` 走同步版。两者都整段 try/catch,快照失败只记日志,不影响保存结果。
 - `file:save-sync`(sendSync):关窗前渲染层的最后一次落盘(窗口销毁后异步 IPC 收不到),只支持 `utf8`,返回 `{ ok, error? }`。
 - **原子写**:`file:save` / `file:save-sync` 都走 `writeAtomic`(先写 `目标.tmp` 再 `rename` 覆盖),
   进程中途被杀不会留下半截 `.smm`;失败时清理 `.tmp` 并返回 `canceled/ok:false`。
@@ -104,7 +111,7 @@
 |---|---|---|
 | `openFile(filters?)` | invoke `dialog:open` | 打开对话框(可指定扩展名过滤) |
 | `readFile(path)` | invoke `file:read` | 按路径读 |
-| `saveFile(payload)` | invoke `file:save` | 保存/导出写盘(payload 可带 `filters`) |
+| `saveFile(payload)` | invoke `file:save` | 保存/导出写盘(payload 可带 `filters`);返回 `{canceled, filePath?, error?}` |
 | `saveFileSync({filePath,data})` | sendSync `file:save-sync` | 关窗前最后一次落盘(同步) |
 | `notifyOpen(path)` | send `app:notify-open` | 上报打开/保存路径(更新最近文件) |
 | `setTitle({title,dirty})` | send `app:set-title` | 同步窗口标题与脏标记 |
@@ -138,14 +145,38 @@
 
 ### 4.3 自动保存与文件操作
 - **没有任何"保不保存"弹窗**:改动由 `scheduleAutosave()` 防抖 **800ms** 静默写回当前文件;`dirty` 圆点仅表示"还有改动没落盘"。
-- `flushAutosave()`:立即落盘,用于防抖到点、`loadFromPath`/`handleNew` 之前(防止把旧内容写进新文件)、以及关窗前。
-  - 已有路径 → `handleSave(false)` 静默写;未命名文档 → `handleSave(true)` **弹一次"另存为"选位置**(选的是路径,不是问保不保存)。
-  - 用户取消该次"另存为" → `autosavePaused = true`,本文档不再自动弹(标题圆点仍在),直到成功保存过一次才恢复。
-  - 写操作经 `saving` 串行,避免两次自动保存交错覆盖。
-- `handleSave(as)`:`flushNote()`(未落盘的备注编辑要进快照)→ `currentSnapshot()` → `file:save`;
-  成功后用**写出去的那份数据**作脏基线(`markSaved(base)`,而不是写完再取一次),路径变化时才 `notifyOpen`(免得自动保存频繁刷最近列表)。
-- `onBeforeUnload()`:`flushNote()` → `syncDirty()` → `desktop.saveFileSync(...)` 同步落盘,覆盖防抖还没到点就关窗的最后 800ms。
-- `loadFromPath(p)`:先 `flushAutosave()` → 按扩展名分流(`.smm/.json` 走原生格式、可原路径保存;`md/xmind/opml` 走导入通道 4.11,落为**未命名文档**)→ `readFile` → 解析 → `setData`/`applyParsed` → 更新标题/路径 → `markSaved` → `centerOnOpen` → `notifyOpen`。
+- **`commitPendingInput()` 是所有"取数据"动作的前置**(切文档、新建、保存、导出、关窗):
+  - 库把正在编辑的节点文字留在 `div.smm-node-edit-wrap` 里,只有 `draw_click` / `body_click` / `svg_mousedown` /
+    `before_node_active` / `mousewheel` / Enter / Tab 才会 `execCommand('SET_NODE_TEXT')` 提交,**没有 blur 兜底**。
+    原生菜单切换、Ctrl+O、拖拽进窗口这些方式不产生 DOM 点击,所以必须主动调
+    `mindMap.renderer.textEdit.hideEditTextBox()` 收口,否则改动压根没进模型,自动保存"看起来没东西要存"。
+  - 备注另有 **250ms** 应用侧防抖(`pendingNote` + `noteTimer`),`flushNote()` 必须在比较脏标记之前跑。
+  - 因此 `flushAutosave()` 的顺序是:`cancelAutosaveTimer → commitPendingInput → syncDirty → 写盘`。
+    (顺序反了就退化成"备注没进快照 → 不判脏 → 直接 return → 改动写进已销毁的节点",v0.2.0 就是这样丢的。)
+- `flushAutosave(): Promise<SaveStatus>`(`'ok' | 'clean' | 'canceled' | 'failed'`):
+  - 循环"比快照 → 写",写完再比一次,消掉两种竞态:库把 `addHistory`/`data_change` 节流 100ms 所以防抖没排上,以及"边写边改"。
+  - 未命名文档 → `handleSave(true)` **弹一次"另存为"选位置**;用户取消 → `autosavePaused = true`。
+    **这个暂停只作用于"还没有路径的文档"**(`autosavePaused && !filePath.value` 才跳过),并且每次换文档/新建都复位;
+    v0.2.0 里它会残留,导致"取消过一次另存为之后,所有已命名文档都不再自动保存"。
+- `handleSave(as)`:所有写盘都串到 `saveChain`(`saveChain.then(run, run)`),防抖写、Ctrl+S、切文档前的 flush 不互相插队;
+  快照在真正执行写的那一刻取,所以排队期间的新改动也会被带上。
+  实际写盘在 `writeSave(as)`:`commitPendingInput()` → `currentSnapshot()` → `file:save`;
+  成功后用**写出去的那份数据**作脏基线(`markSaved(base)`),路径变化时才 `notifyOpen`。
+- **写盘失败不再静默**(v0.2.1):
+  - `file:save` 区分"用户在对话框里取消"(`{canceled:true}`)与"写不进去"(`{canceled:false, error, filePath}`),
+    失败时带上路径,重试不会再弹一次"另存为"。
+  - `writeSave` 自动重试 **2 次(间隔 400ms)** —— 多数失败是杀软/其他程序瞬时占着文件。
+  - 仍失败 → `saveProblem = { path, error }`,画布上方浮一条 `SaveBanner`(不占布局、非模态):
+    **重试保存 / 另存为副本 / 仍要切换(丢弃)**;`ensureSavedBeforeSwitch()` 在 `failed` 且未点"仍要切换"时**中止这次切换**,
+    因为 `setData` 一换文档,内存里那份没落盘的改动就再也拿不回来了。成功后 `saveProblem` 自动清空。
+- **切换文档前要等渲染落定**:`settleRender()` —— 刚提交的编辑会触发一次渲染(`Render.render` 是 `setTimeout(0)` 排队,
+  `_render` 期间会换掉 `nodeCache`/`lastNodeCache`);在它没画完时 `setData(新文档)`,两次渲染交错,旧文档的节点不会被销毁,
+  画布上出现**两份导图重叠**(实测:START→START→END,n=5)。所以 `commitPendingInput()` 若真的提交了东西
+  (`inputJustCommitted`,只置真、由消费方清),切换前多等一个"渲染结束"。
+- `onBeforeUnload()`:`commitPendingInput()` → `syncDirty()` → `desktop.saveFileSync(...)` 同步落盘,覆盖防抖还没到点就关窗的最后 800ms。
+- `loadFromPath(p)`:先 `ensureSavedBeforeSwitch()`(可能因写盘失败而中止)→ 按扩展名分流(`.smm/.json` 走原生格式、可原路径保存;
+  `md/xmind/opml` 走导入通道 4.11,落为**未命名文档**)→ `readFile` → 解析 → `setData`/`applyParsed` → 更新标题/路径 →
+  `autosavePaused = false` + `saveProblem = null` + `markSaved` → `centerOnOpen` → `notifyOpen`。
   - 若 `mindMap` 还没创建好(启动恢复的 IPC 常早于 ResizeObserver 首帧),路径存入 `pendingOpenPath` 排队,
     等**首次 `node_tree_render_end`**(初始模板渲染完毕)后再补打开。
     早于该时机 `setData` 会与首帧渲染交错,导致默认模板的节点和文档内容同时出现在画布上(重叠)。
@@ -153,7 +184,12 @@
 - `centerOnOpen()`:注册一次性 `node_tree_render_end` → `view.fit()`,把整张图搬到画布中央(内容超出画布时顺带缩小,小于画布则保持 100% 并居中)。
   必须等渲染结束,否则 `draw.rbox()` 拿到的还是上一份数据的包围盒。
 - `handleOpen()`:对话框选文件后走 `loadFromPath`。
-- `handleNew()`:先 `flushAutosave()`,再重置为 `defaultData`,并**一并复位 layout(`logicalStructure`)、主题与 `currentTheme`**,清空路径、标题"未命名"、`autosavePaused = false`。
+- `handleNew()`:先 `ensureSavedBeforeSwitch()`,再重置为 `defaultData`,并**一并复位 layout(`logicalStructure`)、主题与 `currentTheme`**,
+  清空路径、标题"未命名"、`autosavePaused = false`、`saveProblem = null`。
+- **快照兜底**:每次"有路径的文档保存"成功后,主进程把同一份内容静默写入
+  `%APPDATA%\mind-map-desktop\snapshots\<目标路径 sha1 前 12 位>\<ISO 时间戳>.smm`,每个文件保留最近 **20** 份;
+  关窗前那次同步保存也有快照。导出产物(带 `filters`)不写快照,快照失败也绝不把一次成功的保存报成失败。
+  菜单「文件 ▸ 打开快照文件夹」直接开目录。
 
 ### 4.4 数据格式适配(关键)
 - `.smm` 文件为**外层包装**:`{ layout, root, theme:{template,config}, view }`。
@@ -329,6 +365,12 @@
 - props:`mindMap / nodes`(节点数组,来自 `App.vue` 的 `activeNodes`);事件:`close`。
 - 行为细节与实现约束见 4.13。
 
+### 6.6 SaveBanner(`src/components/SaveBanner.vue`)
+- 写盘失败时浮在画布顶部(`position:absolute`,不占布局,免得触发画布 resize),红底一行 + 三个动作。
+- props:`path / error`;事件:`retry`(重试当前路径)、`saveAs`(另存为副本,成功即视为脱离困境)、`discard`(置 `allowDiscardOnce`,明确允许下一次切换丢弃未保存改动)。
+- 只在 `saveProblem` 非空时由 `App.vue` 用 `v-if` 挂出;任何一次成功保存都会把它清空,不需要用户点"关闭"。
+- 它是**非模态**的:不拦编辑操作,只拦"换文档"(见 4.3 的 `ensureSavedBeforeSwitch`)。
+
 ---
 
 ## 7. 模块:构建与打包
@@ -357,7 +399,7 @@
 |---|---|---|---|
 | `dialog:open` | invoke | 渲染→主 | 打开对话框(可带 `filters`) |
 | `file:read` | invoke | 渲染→主 | 按路径读文件 |
-| `file:save` | invoke | 渲染→主 | 保存/导出写盘(原子写) |
+| `file:save` | invoke | 渲染→主 | 保存/导出写盘(原子写;区分 canceled / error;文档保存成功后写快照) |
 | `app:notify-open` | send | 渲染→主 | 更新最近文件/上次文件 |
 | `app:set-title` | send | 渲染→主 | 窗口标题 + 脏标记 |
 | `file:save-sync` | sendSync | 渲染→主 | 关窗前最后一次落盘(原子写) |
@@ -397,6 +439,10 @@
 - [x] 导入后不判脏(`withExpand` 补齐 `expand`,避免库渲染期的隐式改动触发"另存为"弹窗)
 - [x] PDF 导出为 A4 页面并自动等比缩放居中(横图自动转横向);JPG 走自建编码(修正库回落成 PNG 的问题)
 - [x] 渲染层加固:sandbox、拦截新窗口(超链接走系统浏览器)、阻止导航、读写路径校验
+- [x] 切换文档前统一收口"输入中"的内容(编辑框里的节点文字 + 备注防抖),再比较脏标记再落盘
+- [x] 写盘失败不再静默:自动重试 2 次 → 非模态提示条(重试 / 另存为副本 / 明确丢弃)+ 拦住这次切换
+- [x] 自动快照:每次成功保存留一份到 `userData/snapshots/`,每个文件保留最近 20 份,菜单可直达该目录
+- [x] `autosavePaused` 只约束未命名文档,且换文档/新建一律复位(修:取消过一次"另存为"后所有文档都不再自动保存)
 
 ## 10. 已知限制 / 待办
 
@@ -408,7 +454,10 @@
 - 备注泡泡位置为 CSS 近似(固定 `translateY(-9px)` 上移),多行/大字号节点未必精确贴到角上;库未提供将备注图标钉到节点角的选项。
 - 打开文件时**不恢复文件里存的 view**(缩放/平移),每次打开都重新 `view.fit()` 居中;想固定视图位置需要改回读取 `view`。
 - 自动保存按"最后写入者胜出",**未做冲突检测**:同一文件被两个窗口(或官方版 web)同时编辑时,后落盘的一方会覆盖另一方;也没有监听外部修改。
-- 未命名文档若首次改动的"另存为"被取消,本文档后续改动不再提示、也不自动保存(新建/重新打开文档会恢复)。
+- 未命名文档若首次改动的"另存为"被取消,该文档后续改动不再自动保存(有路径的文档不受影响;换文档/新建即复位)。
+- 写盘一直失败时**不会自动退出或强存**:切换文档会被提示条拦住,但直接杀进程/关窗(同步保存也失败)仍会丢掉最后一次改动,
+  此时只能去 `userData/snapshots/` 取上一份快照。
+- 快照只在"保存成功"时产生,所以最多回退到**上一次成功落盘**的版本;它不是版本历史浏览器,没有对比/回滚 UI。
 - 启动恢复与"最近打开"**不校验文件是否仍存在**:上次打开的文件被删掉或移走后,冷启动会弹一次"文件解析失败:…ENOENT"。
 - 未注册 RichText(富文本)/ Formula(公式)/ MiniMap 等插件。
 - portable 版配置仍写在 `%APPDATA%`(userData),非完全"绿色随 exe 走"。
@@ -423,3 +472,5 @@
   `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.0`(标记为 Latest),附件
   `MindMapDesktop-portable-0.2.0.exe`(106,651,099 B / sha256 `24f550da…01da57`,与本地产物一致)。
   发布前用 CDP 对**打包产物**复验:冷启动渲染正常、无异常,拖入 md/opml/xmind 五份样例均正确建树且不判脏。
+- **v0.2.1**(自动保存不再丢改动):收口"输入中"的节点文字与备注 → 再比较脏标记 → 再落盘;写盘失败区分"取消/错误"、自动重试并浮出提示条且拦住切换;`autosavePaused` 只约束未命名文档并随切换复位;每次成功保存留快照到 `userData/snapshots/`。
+  回归用例(全部跑在打包产物 + 隔离 profile 上):编辑中切文档保住、备注 30ms 内切走保住、文件被锁时切换被拦住且解锁后自动补写成功、快速来回切换不串档、导入五份样例仍不判脏、两份图不再重叠。

@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar.vue'
 import Sidebar from './components/Sidebar.vue'
 import NoteSidebar from './components/NoteSidebar.vue'
 import ContextMenu from './components/ContextMenu.vue'
+import SaveBanner from './components/SaveBanner.vue'
 import { useMindMap, defaultData } from './composables/useMindMap'
 import { themePresets, withNodeSpacing } from './composables/themes'
 import { exportJpeg, exportPdf } from './composables/rasterExport'
@@ -178,10 +179,18 @@ function applyParsed(parsed: any) {
 
 // ---------- 自动保存 ----------
 const AUTOSAVE_DELAY = 800
+// 写失败多半是瞬时的文件锁(杀软扫描、别的程序正打开着这份),先自己重试再打扰用户
+const SAVE_RETRY_TIMES = 2
+const SAVE_RETRY_DELAY = 400
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
-let saving: Promise<boolean> | null = null
+// 所有写盘串到一条链上:防抖写、Ctrl+S、切文档前的 flush 不能互相插队
+let saveChain: Promise<unknown> = Promise.resolve()
 // 未命名文档的"另存为"被取消后置真:没有路径就静默放弃,不再反复弹框
 let autosavePaused = false
+// 只放行一次"明知没存上仍要切走",由提示条上的按钮显式触发
+let allowDiscardOnce = false
+type SaveStatus = 'ok' | 'clean' | 'canceled' | 'failed'
+const saveProblem = ref<{ path: string; error: string } | null>(null)
 
 function cancelAutosaveTimer() {
   if (autosaveTimer) {
@@ -196,23 +205,89 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, AUTOSAVE_DELAY)
 }
 
+// 把"输入中"的东西收进数据模型:
+// 1) 库把正在编辑的节点文字留在 contenteditable 里,只有画布点击/回车等事件才提交,
+//    而原生菜单、Ctrl+O、拖拽这些切文档的方式不会产生 DOM 点击,不收口就连改动都看不到;
+// 2) 备注有自己的 250ms 防抖,不先落回节点,快照里就没有这笔改动。
+// 提交会让库把一次渲染排到下一个宏任务,切换文档前得等它画完,否则那一帧会把旧文档的
+// 节点叠到新文档上(两份图同时出现在画布上)。inputJustCommitted 就是给调用方判断用的。
+let inputJustCommitted = false
+
+function commitPendingInput() {
+  const te = mindMap.value?.renderer?.textEdit
+  const editing = !!te?.isShowTextEdit?.()
+  const hadNote = !!pendingNote
+  if (editing) te.hideEditTextBox()
+  flushNote()
+  // 只置真,由消费方(切换文档时)清掉:flushAutosave 与写盘里各收口一次,
+  // 第二次调用看不到在编辑了,把标记擦掉就会漏掉等渲染。
+  if (editing || hadNote) inputJustCommitted = true
+}
+
 // 立即落盘:防抖到点、切换文档、关窗前都走这里
-async function flushAutosave(): Promise<boolean> {
+async function flushAutosave(): Promise<SaveStatus> {
   cancelAutosaveTimer()
+  if (!mindMap.value) return 'clean'
+  commitPendingInput()
+  // 这个标记只对"还没有路径的文档"有意义,有路径的文档没有理由跳过保存
+  if (autosavePaused && !filePath.value) return 'canceled'
+  let status: SaveStatus = 'clean'
+  // 写完再比一次:库把 data_change 节流了 100ms,排不上防抖的改动只能靠这里兜住;
+  // 也可能是"边写边改",这一轮写完还剩新改动。
+  for (let round = 0; round < SAVE_RETRY_TIMES + 2; round++) {
+    syncDirty()
+    if (!dirty.value) return status
+    const pickingPath = !filePath.value
+    // 未命名文档没有路径,只能让用户选一次位置(选完之后就再不打扰了)
+    status = await handleSave(pickingPath)
+    if (status === 'failed') return 'failed'
+    if (status === 'canceled') {
+      if (pickingPath) autosavePaused = true
+      return 'canceled'
+    }
+  }
+  return status
+}
+
+// 换文档/新建之前:先把这一份落盘。写不进去就不要继续了 —— 一旦 setData 换了文档,
+// 内存里这份未落盘的改动就再也找不回来,只能让用户在提示条上明确决定。
+async function ensureSavedBeforeSwitch(): Promise<boolean> {
+  const st = await flushAutosave()
+  if (st === 'failed' && !allowDiscardOnce) return false
+  if (st === 'failed' && allowDiscardOnce) {
+    allowDiscardOnce = false
+    saveProblem.value = null
+  }
+  if (inputJustCommitted) {
+    inputJustCommitted = false
+    await settleRender()
+  }
+  return true
+}
+
+// 等库把"刚提交的那笔改动"渲染完再换文档。渲染是 setTimeout(0) 排队的,且 _render 期间
+// 会改写节点缓存;在飞的时候 setData 会让两次渲染交错,上一份文档的节点不被销毁,
+// 画布上就出现两份导图重叠。
+function settleRender(): Promise<void> {
   const mm = mindMap.value
-  if (!mm || autosavePaused) return true
-  // data_change 可能还没派发,自己比一次快照,别把刚发生的改动漏掉
-  syncDirty()
-  if (!dirty.value) return true
-  // 未命名文档没有路径,只能让用户选一次位置(选完之后就再不打扰了)
-  const pickingPath = !filePath.value
-  if (saving) return saving
-  saving = handleSave(pickingPath).finally(() => {
-    saving = null
+  const renderer = mm?.renderer
+  if (!mm || !renderer) return Promise.resolve()
+  return new Promise((resolve) => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      mm.off('node_tree_render_end', finish)
+      clearTimeout(guard)
+      resolve()
+    }
+    const guard = setTimeout(finish, 1500)
+    // 先放行一个宏任务,让排队的渲染真正开始,否则 isRendering 还是 false 会漏等
+    setTimeout(() => {
+      if (renderer.isRendering) mm.on('node_tree_render_end', finish)
+      else finish()
+    }, 0)
   })
-  const ok = await saving
-  if (!ok && pickingPath) autosavePaused = true
-  return ok
 }
 
 // 打开文件后把整张图搬到画布中央(超出画布会顺带缩小)
@@ -256,7 +331,7 @@ async function loadFromPath(p: string) {
     alert(`无法打开 .${ext} 文件`)
     return
   }
-  await flushAutosave()
+  if (!(await ensureSavedBeforeSwitch())) return
   try {
     const { buffer } = await desktop.readFile(p)
     // .smm/.json 走原生格式(可原路径保存),其余走导入通道
@@ -265,10 +340,11 @@ async function loadFromPath(p: string) {
       filePath.value = p
     } else {
       await applyImported(ext, buffer, docTitle(p))
-      // 换文档后重新计时:上一份文档若取消了"另存为",不该继续拖累这份
-      autosavePaused = false
       filePath.value = null
     }
+    // 换文档后一切重新开始算:上一份文档的状态不该继续影响这一份
+    autosavePaused = false
+    saveProblem.value = null
     title.value = docTitle(p)
     markSaved()
     centerOnOpen()
@@ -303,39 +379,74 @@ async function handleImport(kind: string) {
 async function handleNew() {
   const mm = mindMap.value
   if (!mm) return
-  await flushAutosave()
+  if (!(await ensureSavedBeforeSwitch())) return
   mm.setData(JSON.parse(JSON.stringify(defaultData)))
   mm.setLayout('logicalStructure')
   applyDefaultTheme()
   filePath.value = null
   title.value = '未命名'
   autosavePaused = false
+  saveProblem.value = null
   markSaved()
 }
 
-async function handleSave(as: boolean): Promise<boolean> {
+// 排进写盘链:自动保存的写、Ctrl+S、切文档前的 flush 依次执行,不互相插队
+function handleSave(as: boolean): Promise<SaveStatus> {
+  const run = () => writeSave(as)
+  saveChain = saveChain.then(run, run)
+  return saveChain as Promise<SaveStatus>
+}
+
+async function writeSave(as: boolean): Promise<SaveStatus> {
   const mm = mindMap.value
-  if (!desktop || !mm) return false
+  if (!desktop || !mm) return 'failed'
   cancelAutosaveTimer()
-  // 先落盘输入中的备注,否则最后一次编辑可能没进快照
-  flushNote()
+  // 备注防抖与编辑框里的文字要先落回数据,否则这一次快照里没有它们
+  commitPendingInput()
+  let target: string | null = as ? null : filePath.value
   const { full, base } = currentSnapshot()
-  const res = await desktop.saveFile({
-    filePath: as ? null : filePath.value,
-    data: full,
-    encoding: 'utf8',
-    defaultName: `${title.value}.smm`,
-  })
-  if (res.canceled || !res.filePath) return false
+  let res: { canceled: boolean; filePath?: string; error?: string } = { canceled: true }
+  for (let i = 0; ; i++) {
+    res = await desktop.saveFile({
+      filePath: target,
+      data: full,
+      encoding: 'utf8',
+      defaultName: `${title.value}.smm`,
+    })
+    // "另存为"对话框已经选过位置了,重试不该再弹一次
+    if (res.filePath) target = res.filePath
+    if (!res.error || i >= SAVE_RETRY_TIMES) break
+    await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAY))
+  }
+  if (res.error) {
+    saveProblem.value = { path: target || title.value, error: res.error }
+    return 'failed'
+  }
+  if (res.canceled || !res.filePath) return 'canceled'
   const moved = res.filePath !== filePath.value
   filePath.value = res.filePath
   title.value = docTitle(res.filePath)
   autosavePaused = false
+  saveProblem.value = null
   // 基线用刚写出去的那份数据,而不是写完再取一次:await 期间的改动才不会被判为已保存
   markSaved(base)
   // 自动保存很频繁,路径没变就不必反复刷最近列表
   if (moved) desktop.notifyOpen(res.filePath)
-  return true
+  return 'ok'
+}
+
+// 提示条:重试当前路径 / 换地方存一份 / 明确允许丢弃后切换
+async function retryFailedSave() {
+  if ((await flushAutosave()) !== 'failed') saveProblem.value = null
+}
+
+async function saveFailedCopyElsewhere() {
+  if ((await handleSave(true)) === 'ok') saveProblem.value = null
+}
+
+function discardFailedSave() {
+  allowDiscardOnce = true
+  saveProblem.value = null
 }
 
 // png/jpg/svg/pdf/xmind 由核心库产出 data URL,md/opml 是自己序列化的文本
@@ -356,8 +467,8 @@ async function handleExport(kind: string) {
   const mm = mindMap.value
   const conf = EXPORT_CONF[kind]
   if (!desktop || !mm || !conf) return
-  // 备注输入框里的内容还在防抖中,先落回节点再取快照
-  flushNote()
+  // 编辑框里的文字与备注防抖都还没进数据,先收口,否则导出的是上一版
+  commitPendingInput()
   try {
     let data = ''
     if (kind === 'pdf') data = await exportPdf(mm, title.value)
@@ -418,7 +529,7 @@ function onBeforeUnload() {
   const mm = mindMap.value
   if (!desktop || !mm || !filePath.value) return
   cancelAutosaveTimer()
-  flushNote()
+  commitPendingInput()
   // 同样不等 data_change 派发了,直接比快照
   syncDirty()
   if (!dirty.value) return
@@ -541,6 +652,14 @@ onBeforeUnmount(() => {
       @export="handleExport"
     />
     <div class="body">
+      <SaveBanner
+        v-if="saveProblem"
+        :path="saveProblem.path"
+        :error="saveProblem.error"
+        @retry="retryFailedSave"
+        @save-as="saveFailedCopyElsewhere"
+        @discard="discardFailedSave"
+      />
       <Sidebar
         v-if="sidebarVisible"
         :items="recent"

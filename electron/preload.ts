@@ -17,6 +17,8 @@ export interface SavePayload {
 export interface SaveResult {
   canceled: boolean
   filePath?: string
+  // 写盘失败时给出原因;不能和"用户在对话框里取消"混成一回事
+  error?: string
 }
 
 export interface AutosavePayload {

@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import syncFs from 'node:fs'
+import { createHash } from 'node:crypto'
 
 process.env.DIST = path.join(__dirname, '../dist')
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -90,6 +91,7 @@ function buildMenu() {
         },
         { type: 'separator' },
         { label: '最近打开', submenu: recentSubmenu },
+        { label: '打开快照文件夹', click: () => shell.openPath(snapshotRoot()) },
         { type: 'separator' },
         { role: 'quit', label: '退出' },
       ],
@@ -219,6 +221,59 @@ function writeAtomicSync(target: string, buf: Buffer) {
   }
 }
 
+// ---------- 自动快照(兜底:写失败的锁通常是瞬时的,但被覆盖的内容要能找回) ----------
+const SNAPSHOT_KEEP = 20
+
+function snapshotRoot() {
+  return path.join(app.getPath('userData'), 'snapshots')
+}
+
+// 按目标路径分目录,文件名带时间戳,字典序即时间序
+function snapshotDirFor(target: string) {
+  const hash = createHash('sha1').update(path.resolve(target).toLowerCase()).digest('hex').slice(0, 12)
+  return path.join(snapshotRoot(), hash)
+}
+
+async function writeSnapshot(target: string, buf: Buffer) {
+  try {
+    const dir = snapshotDirFor(target)
+    await fs.mkdir(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    await fs.writeFile(path.join(dir, `${stamp}.smm`), buf)
+    const names = (await fs.readdir(dir)).sort()
+    if (names.length > SNAPSHOT_KEEP) {
+      for (const n of names.slice(0, names.length - SNAPSHOT_KEEP)) {
+        await fs.rm(path.join(dir, n), { force: true }).catch(() => {})
+      }
+    }
+  } catch (err) {
+    // 快照失败只影响兜底能力,不能把一次成功的保存报成失败
+    console.error('快照失败:', (err as Error).message)
+  }
+}
+
+// 关窗前那次是同步 IPC,只能配同步版快照
+function writeSnapshotSync(target: string, buf: Buffer) {
+  try {
+    const dir = snapshotDirFor(target)
+    syncFs.mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    syncFs.writeFileSync(path.join(dir, `${stamp}.smm`), buf)
+    const names = syncFs.readdirSync(dir).sort()
+    if (names.length > SNAPSHOT_KEEP) {
+      for (const n of names.slice(0, names.length - SNAPSHOT_KEEP)) {
+        try {
+          syncFs.rmSync(path.join(dir, n), { force: true })
+        } catch {
+          /* 清不掉就留给下次 */
+        }
+      }
+    }
+  } catch (err) {
+    console.error('快照失败:', (err as Error).message)
+  }
+}
+
 ipcMain.handle('dialog:open', async (_e, filters?: Electron.FileFilter[]) => {
   if (!win) return { canceled: true }
   const res = await dialog.showOpenDialog(win, {
@@ -249,7 +304,9 @@ interface SavePayload {
 
 ipcMain.handle('file:save', async (_e, payload: SavePayload) => {
   if (!win) return { canceled: true }
-  let target = payload.filePath ? assertAbsolutePath(payload.filePath, '保存') : null
+  // 渲染层给了路径就是"保存当前文档"(自动保存/保存),没给才弹"另存为"
+  const knownPath = !!payload.filePath
+  let target = knownPath ? assertAbsolutePath(payload.filePath, '保存') : null
   if (!target) {
     const res = await dialog.showSaveDialog(win, {
       title: '保存',
@@ -266,9 +323,14 @@ ipcMain.handle('file:save', async (_e, payload: SavePayload) => {
   try {
     await writeAtomic(target, buf)
   } catch (err) {
-    console.error('保存失败:', target, (err as Error).message)
-    return { canceled: true }
+    const msg = (err as Error).message
+    console.error('保存失败:', target, msg)
+    // 不能回报成"用户取消":那样渲染层会把一次写失败当成"用户不想存"静默丢弃改动。
+    // 带上 target,渲染层重试时就不必再弹一次"另存为"。
+    return { canceled: false, filePath: target, error: msg }
   }
+  // 只对文档保存留快照;导出产物(带 filters)不进快照
+  if (knownPath && !payload.filters) await writeSnapshot(target, buf)
   return { canceled: false, filePath: target }
 })
 
@@ -276,7 +338,9 @@ ipcMain.handle('file:save', async (_e, payload: SavePayload) => {
 ipcMain.on('file:save-sync', (e, payload: SavePayload) => {
   try {
     const target = assertAbsolutePath(payload.filePath, '自动保存')
-    writeAtomicSync(target, Buffer.from(payload.data || '', 'utf8'))
+    const buf = Buffer.from(payload.data || '', 'utf8')
+    writeAtomicSync(target, buf)
+    writeSnapshotSync(target, buf)
     e.returnValue = { ok: true }
   } catch (err) {
     console.error('自动保存失败:', (err as Error).message)
