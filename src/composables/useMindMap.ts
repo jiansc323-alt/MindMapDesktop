@@ -1,12 +1,15 @@
 import { onBeforeUnmount, onMounted, shallowRef, type Ref } from 'vue'
 import MindMap from 'simple-mind-map'
 import Export from 'simple-mind-map/src/plugins/Export.js'
+import ExportXMind from 'simple-mind-map/src/plugins/ExportXMind.js'
 import Select from 'simple-mind-map/src/plugins/Select.js'
 import Drag from 'simple-mind-map/src/plugins/Drag.js'
 import KeyboardNavigation from 'simple-mind-map/src/plugins/KeyboardNavigation.js'
 import { themePresets } from './themes'
 
+// ExportPDF 不注册:PDF 由 composables/rasterExport.ts 直接产出 A4 页面
 MindMap.usePlugin(Export)
+  .usePlugin(ExportXMind)
   .usePlugin(Select)
   .usePlugin(Drag)
   .usePlugin(KeyboardNavigation)

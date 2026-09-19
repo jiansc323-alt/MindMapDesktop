@@ -4,6 +4,7 @@ dist-electron/
 release/
 *.log
 .DS_Store
+.qoder-tmp/
 
 # 本地测试数据(含个人笔记内容,不入库)
 /123.smm

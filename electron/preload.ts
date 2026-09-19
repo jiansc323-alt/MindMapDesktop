@@ -34,7 +34,6 @@ export type MenuAction =
   | 'open'
   | 'save'
   | 'saveAs'
-  | 'exportPng'
   | 'undo'
   | 'redo'
   | 'addNote'
@@ -42,9 +41,12 @@ export type MenuAction =
   | 'zoomIn'
   | 'zoomOut'
   | 'reset'
+  | `export:${string}`
+  | `import:${string}`
 
 const api = {
-  openFile: (): Promise<OpenResult> => ipcRenderer.invoke('dialog:open'),
+  openFile: (filters?: Electron.FileFilter[]): Promise<OpenResult> =>
+    ipcRenderer.invoke('dialog:open', filters),
   readFile: (filePath: string): Promise<{ filePath: string; buffer: Uint8Array }> =>
     ipcRenderer.invoke('file:read', filePath),
   saveFile: (payload: SavePayload): Promise<SaveResult> =>

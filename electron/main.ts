@@ -39,6 +39,22 @@ function send(action: string) {
   win?.webContents.send('menu:action', action)
 }
 
+// [菜单项, 动作后缀, 快捷键]
+const IMPORT_KINDS: [string, string, string?][] = [
+  ['Markdown (.md)', 'md'],
+  ['XMind (.xmind)', 'xmind'],
+  ['OPML (.opml)', 'opml'],
+]
+const EXPORT_KINDS: [string, string, string?][] = [
+  ['PNG 图片', 'png', 'CmdOrCtrl+E'],
+  ['JPG 图片', 'jpg'],
+  ['SVG 矢量图', 'svg'],
+  ['PDF(A4 自动缩放)', 'pdf'],
+  ['Markdown', 'md'],
+  ['XMind', 'xmind'],
+  ['OPML', 'opml'],
+]
+
 function buildMenu() {
   const recentSubmenu: Electron.MenuItemConstructorOptions[] = state.recent.length
     ? state.recent.map((p) => ({
@@ -53,11 +69,25 @@ function buildMenu() {
       submenu: [
         { label: '新建', accelerator: 'CmdOrCtrl+N', click: () => send('new') },
         { label: '打开', accelerator: 'CmdOrCtrl+O', click: () => send('open') },
+        {
+          label: '导入',
+          submenu: IMPORT_KINDS.map(([label, kind, accel]) => ({
+            label,
+            ...(accel ? { accelerator: accel } : {}),
+            click: () => send(`import:${kind}`),
+          })),
+        },
         { type: 'separator' },
         { label: '保存', accelerator: 'CmdOrCtrl+S', click: () => send('save') },
         { label: '另存为', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('saveAs') },
-        { type: 'separator' },
-        { label: '导出 PNG', accelerator: 'CmdOrCtrl+E', click: () => send('exportPng') },
+        {
+          label: '导出为',
+          submenu: EXPORT_KINDS.map(([label, kind, accel]) => ({
+            label,
+            ...(accel ? { accelerator: accel } : {}),
+            click: () => send(`export:${kind}`),
+          })),
+        },
         { type: 'separator' },
         { label: '最近打开', submenu: recentSubmenu },
         { type: 'separator' },
@@ -146,7 +176,11 @@ function createWindow() {
 }
 
 const OPEN_FILTERS: Electron.FileFilter[] = [
+  { name: '思维导图 / 大纲', extensions: ['smm', 'json', 'md', 'xmind', 'opml'] },
   { name: '思维导图', extensions: ['smm', 'json'] },
+  { name: 'Markdown', extensions: ['md'] },
+  { name: 'XMind', extensions: ['xmind'] },
+  { name: 'OPML', extensions: ['opml'] },
   { name: '所有文件', extensions: ['*'] },
 ]
 
@@ -185,11 +219,11 @@ function writeAtomicSync(target: string, buf: Buffer) {
   }
 }
 
-ipcMain.handle('dialog:open', async () => {
+ipcMain.handle('dialog:open', async (_e, filters?: Electron.FileFilter[]) => {
   if (!win) return { canceled: true }
   const res = await dialog.showOpenDialog(win, {
     title: '打开思维导图',
-    filters: OPEN_FILTERS,
+    filters: filters?.length ? filters : OPEN_FILTERS,
     properties: ['openFile'],
   })
   if (res.canceled || res.filePaths.length === 0) return { canceled: true }

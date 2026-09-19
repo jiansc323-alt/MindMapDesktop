@@ -54,5 +54,15 @@ SOFTWARE.
 
 ---
 
+## pdf-lib(PDF 导出)
+
+- 名称:pdf-lib
+- 版本:1.17.1
+- 许可证:MIT
+- 仓库:https://github.com/Hopding/pdf-lib
+- 版权:Copyright (c) 2019 Andrew Dillon
+
+---
+
 完整许可证文本以各组件官方仓库为准。上述 MIT 组件的许可证要求"在所有副本或重要部分中
 包含版权声明与许可声明",本文件即履行该义务。

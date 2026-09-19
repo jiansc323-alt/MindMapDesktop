@@ -6,6 +6,19 @@ import NoteSidebar from './components/NoteSidebar.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import { useMindMap, defaultData } from './composables/useMindMap'
 import { themePresets, withNodeSpacing } from './composables/themes'
+import { exportJpeg, exportPdf } from './composables/rasterExport'
+import {
+  dataUrlToBase64,
+  docTitle,
+  extOf,
+  isSmm,
+  markdownFromRoot,
+  opmlFromRoot,
+  rootFromMarkdown,
+  rootFromOpml,
+  rootFromXmind,
+  withExpand,
+} from './composables/transfer'
 import type { MenuAction } from '../electron/preload'
 
 const el = ref<HTMLElement>()
@@ -20,6 +33,8 @@ const currentTheme = ref('default')
 const noteVisible = ref(false)
 const currentNote = ref('')
 const activeNode = shallowRef<any>(null)
+// 格式面板需要整组选中节点(Ctrl+点多选)
+const activeNodes = shallowRef<any[]>([])
 let noteTimer: ReturnType<typeof setTimeout> | null = null
 // 备注输入时的目标节点,防止切换节点后把文本写错地方
 let pendingNote: { node: any; text: string } | null = null
@@ -31,11 +46,6 @@ let ctxNode: any = null
 let savedSnapshot = ''
 
 const desktop = window.desktop
-
-function baseName(p: string) {
-  const name = p.replace(/\\/g, '/').split('/').pop() || '未命名'
-  return name.replace(/\.(smm|json)$/i, '')
-}
 
 // 脏比对基线不含 view:平移/缩放不算内容改动,否则"打开时居中"自己就会触发一次保存
 function snapshot() {
@@ -91,6 +101,7 @@ watch(mindMap, (mm) => {
     const list = args.find((a) => Array.isArray(a))
     const node = list ? list[0] : args[0]
     activeNode.value = node || null
+    activeNodes.value = list || (node ? [node] : [])
     currentNote.value = node ? node.getData('note') || '' : ''
   })
   mm.on('node_note_click', (node: any) => {
@@ -135,11 +146,25 @@ function matchPresetName(config: Record<string, any>): string {
   return themePresets.find((p) => matchesPreset(p.config, config))?.name || 'custom'
 }
 
+// 预设 config 里已含节点间距,可直接下发
+function applyPresetTheme(name: string) {
+  const mm = mindMap.value
+  const preset = themePresets.find((p) => p.name === name)
+  if (!mm || !preset) return
+  mm.setTheme('default')
+  mm.setThemeConfig(preset.config)
+  currentTheme.value = name
+}
+
+function applyDefaultTheme() {
+  applyPresetTheme(themePresets[0].name)
+}
+
 function applyParsed(parsed: any) {
   const mm = mindMap.value
   if (!mm) return
   const root = parsed.root ?? parsed
-  mm.setData(root)
+  mm.setData(withExpand(root))
   if (parsed.layout) mm.setLayout(parsed.layout)
   mm.setTheme(parsed.theme?.template || 'default')
   const cfg = parsed.theme?.config
@@ -202,6 +227,23 @@ function centerOnOpen() {
   mm.on('node_tree_render_end', done)
 }
 
+// 导入的格式没有对应的写回路径,一律按新文档套用默认主题
+async function applyImported(ext: string, buffer: Uint8Array, name: string) {
+  const mm = mindMap.value
+  if (!mm) return
+  const text = () => new TextDecoder('utf-8').decode(buffer)
+  let root: any = null
+  if (ext === 'md' || ext === 'markdown') root = rootFromMarkdown(text(), name)
+  else if (ext === 'xmind') root = await rootFromXmind(buffer, name)
+  else if (ext === 'opml') root = rootFromOpml(text(), name)
+  else throw new Error(`不支持的格式:.${ext || '?'}`)
+  mm.setData(root)
+  mm.setLayout('logicalStructure')
+  applyDefaultTheme()
+}
+
+const IMPORT_KINDS = ['md', 'markdown', 'xmind', 'opml']
+
 async function loadFromPath(p: string) {
   if (!desktop) return
   // 启动恢复的 IPC 可能早于 MindMap 创建(等 ResizeObserver 首帧),先排队
@@ -209,13 +251,25 @@ async function loadFromPath(p: string) {
     pendingOpenPath = p
     return
   }
+  const ext = extOf(p)
+  if (!isSmm(p) && !IMPORT_KINDS.includes(ext)) {
+    alert(`无法打开 .${ext} 文件`)
+    return
+  }
   await flushAutosave()
   try {
     const { buffer } = await desktop.readFile(p)
-    const parsed = JSON.parse(new TextDecoder('utf-8').decode(buffer))
-    applyParsed(parsed)
-    filePath.value = p
-    title.value = baseName(p)
+    // .smm/.json 走原生格式(可原路径保存),其余走导入通道
+    if (isSmm(p)) {
+      applyParsed(JSON.parse(new TextDecoder('utf-8').decode(buffer)))
+      filePath.value = p
+    } else {
+      await applyImported(ext, buffer, docTitle(p))
+      // 换文档后重新计时:上一份文档若取消了"另存为",不该继续拖累这份
+      autosavePaused = false
+      filePath.value = null
+    }
+    title.value = docTitle(p)
     markSaved()
     centerOnOpen()
     desktop.notifyOpen(p)
@@ -231,15 +285,28 @@ async function handleOpen() {
   await loadFromPath(res.filePath)
 }
 
+const IMPORT_FILTERS: Record<string, { name: string; extensions: string[] }> = {
+  md: { name: 'Markdown', extensions: ['md', 'markdown'] },
+  xmind: { name: 'XMind 导图', extensions: ['xmind'] },
+  opml: { name: 'OPML 大纲', extensions: ['opml'] },
+}
+
+async function handleImport(kind: string) {
+  if (!desktop) return
+  const filter = IMPORT_FILTERS[kind]
+  if (!filter) return
+  const res = await desktop.openFile([filter, { name: '所有文件', extensions: ['*'] }])
+  if (res.canceled || !res.filePath) return
+  await loadFromPath(res.filePath)
+}
+
 async function handleNew() {
   const mm = mindMap.value
   if (!mm) return
   await flushAutosave()
   mm.setData(JSON.parse(JSON.stringify(defaultData)))
   mm.setLayout('logicalStructure')
-  mm.setTheme('default')
-  mm.setThemeConfig(themePresets[0].config)
-  currentTheme.value = themePresets[0].name
+  applyDefaultTheme()
   filePath.value = null
   title.value = '未命名'
   autosavePaused = false
@@ -262,7 +329,7 @@ async function handleSave(as: boolean): Promise<boolean> {
   if (res.canceled || !res.filePath) return false
   const moved = res.filePath !== filePath.value
   filePath.value = res.filePath
-  title.value = baseName(res.filePath)
+  title.value = docTitle(res.filePath)
   autosavePaused = false
   // 基线用刚写出去的那份数据,而不是写完再取一次:await 期间的改动才不会被判为已保存
   markSaved(base)
@@ -271,33 +338,43 @@ async function handleSave(as: boolean): Promise<boolean> {
   return true
 }
 
-async function handleExportPng() {
-  if (!desktop || !mindMap.value) return
+// png/jpg/svg/pdf/xmind 由核心库产出 data URL,md/opml 是自己序列化的文本
+const EXPORT_CONF: Record<
+  string,
+  { ext: string; label: string; binary: boolean }
+> = {
+  png: { ext: 'png', label: 'PNG 图片', binary: true },
+  jpg: { ext: 'jpg', label: 'JPG 图片', binary: true },
+  svg: { ext: 'svg', label: 'SVG 矢量图', binary: true },
+  pdf: { ext: 'pdf', label: 'PDF 文档', binary: true },
+  md: { ext: 'md', label: 'Markdown', binary: false },
+  xmind: { ext: 'xmind', label: 'XMind 导图', binary: true },
+  opml: { ext: 'opml', label: 'OPML 大纲', binary: false },
+}
+
+async function handleExport(kind: string) {
+  const mm = mindMap.value
+  const conf = EXPORT_CONF[kind]
+  if (!desktop || !mm || !conf) return
+  // 备注输入框里的内容还在防抖中,先落回节点再取快照
   flushNote()
   try {
-    let base64 = await mindMap.value.export('png', false, title.value)
-    if (typeof base64 === 'string' && base64.startsWith('data:')) {
-      base64 = base64.slice(base64.indexOf(',') + 1)
-    }
+    let data = ''
+    if (kind === 'pdf') data = await exportPdf(mm, title.value)
+    else if (kind === 'jpg') data = await exportJpeg(mm, title.value)
+    else if (kind === 'md') data = markdownFromRoot(mm.getData())
+    else if (kind === 'opml') data = opmlFromRoot(mm.getData(), title.value)
+    else data = dataUrlToBase64(await mm.export(kind, false, title.value))
     await desktop.saveFile({
       filePath: null,
-      data: base64,
-      encoding: 'base64',
-      defaultName: `${title.value}.png`,
-      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+      data,
+      encoding: conf.binary ? 'base64' : 'utf8',
+      defaultName: `${title.value}.${conf.ext}`,
+      filters: [{ name: conf.label, extensions: [conf.ext] }],
     })
   } catch (err) {
     alert('导出失败:' + (err as Error).message)
   }
-}
-
-function applyTheme(name: string) {
-  const mm = mindMap.value
-  const preset = themePresets.find((p) => p.name === name)
-  if (!mm || !preset) return
-  mm.setTheme('default')
-  mm.setThemeConfig(preset.config)
-  currentTheme.value = name
 }
 
 const activeNodeName = computed(() => activeNode.value?.getData('text') || '')
@@ -366,6 +443,14 @@ watch(noteVisible, (v) => {
 
 function runAction(action: MenuAction) {
   const mm = mindMap.value
+  if (action.startsWith('export:')) {
+    handleExport(action.slice(7))
+    return
+  }
+  if (action.startsWith('import:')) {
+    handleImport(action.slice(7))
+    return
+  }
   switch (action) {
     case 'new':
       handleNew()
@@ -378,9 +463,6 @@ function runAction(action: MenuAction) {
       break
     case 'saveAs':
       handleSave(true)
-      break
-    case 'exportPng':
-      handleExportPng()
       break
     case 'addNote':
       noteVisible.value = true
@@ -447,13 +529,16 @@ onBeforeUnmount(() => {
       :sidebar-visible="sidebarVisible"
       :theme="currentTheme"
       :note-visible="noteVisible"
+      :mind-map="mindMap"
+      :nodes="activeNodes"
       @toggle-sidebar="sidebarVisible = !sidebarVisible"
       @toggle-note="noteVisible = !noteVisible"
-      @theme="applyTheme"
+      @theme="applyPresetTheme"
       @open="handleOpen"
       @save="handleSave(false)"
       @save-as="handleSave(true)"
-      @export-png="handleExportPng"
+      @import="handleImport"
+      @export="handleExport"
     />
     <div class="body">
       <Sidebar

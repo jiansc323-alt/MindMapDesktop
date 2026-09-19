@@ -16,6 +16,16 @@ declare module 'simple-mind-map/src/plugins/*' {
   export default plugin
 }
 
+declare module 'simple-mind-map/src/parse/*' {
+  const mod: any
+  export default mod
+}
+
+declare module 'simple-mind-map/src/utils/*' {
+  const mod: any
+  export default mod
+}
+
 interface Window {
   desktop?: import('../electron/preload').DesktopApi
 }
