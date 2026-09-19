@@ -334,4 +334,5 @@
 - `index.html` 未加 CSP 元标签;主进程未做单实例锁(portable exe 可多开)。
 - "已完成"对勾写的是自定义节点字段 `data.data.done`,**官方 web 版不认这个字段**,同一文件在官方版里打开不会显示对勾(数据不丢,回到本客户端仍生效)。
 - 仓库根目录留有测试数据 `123.smm`、`12345.smm`(本地个人内容,已在 `.gitignore` 里排除,不入库)。
-- 已产出免安装单 exe:`release/MindMapDesktop-portable-0.1.0.exe`(约 102 MB,内含 Electron 运行时),已包含自动保存 + 打开自动居中、右键完成标记、加大间距;合规文件(`LICENSE`、`THIRD-PARTY-NOTICES.md`)随包附带于 `resources/`。
+- 已发布:`https://github.com/jiansc323-alt/MindMapDesktop`(public,`main` 分支),首个 Release **v0.1.0** 附 portable exe。
+- 免安装单 exe:`release/MindMapDesktop-portable-0.1.0.exe`(101.6 MiB / sha256 `b65a6ae1…e6c307`,内含 Electron 运行时),已包含自动保存 + 打开自动居中、右键完成标记、加大间距;合规文件(`LICENSE`、`THIRD-PARTY-NOTICES.md`)随包附带于 `resources/`。
