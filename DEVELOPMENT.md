@@ -419,5 +419,7 @@
 - 仓库根目录留有测试数据 `123.smm`、`12345.smm`(本地个人内容,已在 `.gitignore` 里排除,不入库)。
 - 已发布:`https://github.com/jiansc323-alt/MindMapDesktop`(public,`main` 分支),首个 Release **v0.1.0** 附 portable exe。
 - 免安装单 exe:`release/MindMapDesktop-portable-0.1.0.exe`(101.6 MiB / sha256 `b65a6ae1…e6c307`,内含 Electron 运行时),已包含自动保存 + 打开自动居中、右键完成标记、加大间距;合规文件(`LICENSE`、`THIRD-PARTY-NOTICES.md`)随包附带于 `resources/`。
-- **v0.2.0**(格式面板 + 导入/导出 md/xmind/opml + png/jpg/svg/pdf 导出):本地已产出 `release/MindMapDesktop-portable-0.2.0.exe`
-  (101.7 MiB / sha256 `24f550da…01da57`),并已用 CDP 对**打包产物**复验:冷启动渲染正常、无异常,拖入 md/opml/xmind 五份样例均正确建树且不判脏。GitHub Release 待推送后挂附件。
+- **v0.2.0**(格式面板 + 导入/导出 md/xmind/opml + png/jpg/svg/pdf 导出):Release 已发布
+  `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.0`(标记为 Latest),附件
+  `MindMapDesktop-portable-0.2.0.exe`(106,651,099 B / sha256 `24f550da…01da57`,与本地产物一致)。
+  发布前用 CDP 对**打包产物**复验:冷启动渲染正常、无异常,拖入 md/opml/xmind 五份样例均正确建树且不判脏。
