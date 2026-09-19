@@ -472,5 +472,6 @@
   `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.0`(标记为 Latest),附件
   `MindMapDesktop-portable-0.2.0.exe`(106,651,099 B / sha256 `24f550da…01da57`,与本地产物一致)。
   发布前用 CDP 对**打包产物**复验:冷启动渲染正常、无异常,拖入 md/opml/xmind 五份样例均正确建树且不判脏。
-- **v0.2.1**(自动保存不再丢改动):收口"输入中"的节点文字与备注 → 再比较脏标记 → 再落盘;写盘失败区分"取消/错误"、自动重试并浮出提示条且拦住切换;`autosavePaused` 只约束未命名文档并随切换复位;每次成功保存留快照到 `userData/snapshots/`。
+- **v0.2.1**(自动保存不再丢改动):Release 已发布 `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.1`
+  (Latest),附件 `MindMapDesktop-portable-0.2.1.exe`(106,652,134 B / sha256 `95addf52…aa257648`)。收口"输入中"的节点文字与备注 → 再比较脏标记 → 再落盘;写盘失败区分"取消/错误"、自动重试并浮出提示条且拦住切换;`autosavePaused` 只约束未命名文档并随切换复位;每次成功保存留快照到 `userData/snapshots/`。
   回归用例(全部跑在打包产物 + 隔离 profile 上):编辑中切文档保住、备注 30ms 内切走保住、文件被锁时切换被拦住且解锁后自动补写成功、快速来回切换不串档、导入五份样例仍不判脏、两份图不再重叠。
