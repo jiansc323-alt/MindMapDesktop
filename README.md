@@ -54,6 +54,13 @@ npm run dist       # 打包 release/MindMapDesktop-portable-<version>.exe
 
 更细的待办清单见 [DEVELOPMENT.md §10](DEVELOPMENT.md)。
 
+## 贡献者
+
+- **jiansc323-alt** — 项目发起、需求与决策、测试。
+- **Qoder**(AI 编程助手,[qoder.com](https://qoder.com))— 参与方案设计、代码实现、调试与文档编写。
+
+本项目的代码与打包产物为 AI 辅助完成;提交时以 `Co-authored-by: Qoder <noreply@qoder.com>` 记名。若发现缺陷请提 Issue,维护者会复核。
+
 ## 许可与致谢
 
 - 本项目采用 [MIT 许可](LICENSE)。
