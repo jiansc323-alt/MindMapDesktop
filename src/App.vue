@@ -205,30 +205,32 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, AUTOSAVE_DELAY)
 }
 
-// 把"输入中"的东西收进数据模型:
-// 1) 库把正在编辑的节点文字留在 contenteditable 里,只有画布点击/回车等事件才提交,
-//    而原生菜单、Ctrl+O、拖拽这些切文档的方式不会产生 DOM 点击,不收口就连改动都看不到;
-// 2) 备注有自己的 250ms 防抖,不先落回节点,快照里就没有这笔改动。
-// 提交会让库把一次渲染排到下一个宏任务,切换文档前得等它画完,否则那一帧会把旧文档的
-// 节点叠到新文档上(两份图同时出现在画布上)。inputJustCommitted 就是给调用方判断用的。
+// 库把正在编辑的节点文字留在 contenteditable 里,只有画布点击/回车等事件才提交进数据。
+// 换文档、导出、关窗这些"这份内容马上会被覆盖/销毁"的场合必须主动收口,否则改动根本没进模型;
+// 但**平时自动保存不能收口** —— 那会在用户敲到一半时把编辑框关掉(0.2.1 就是这么打断输入的)。
 let inputJustCommitted = false
 
-function commitPendingInput() {
+function commitTextEdit() {
   const te = mindMap.value?.renderer?.textEdit
-  const editing = !!te?.isShowTextEdit?.()
-  const hadNote = !!pendingNote
-  if (editing) te.hideEditTextBox()
-  flushNote()
-  // 只置真,由消费方(切换文档时)清掉:flushAutosave 与写盘里各收口一次,
-  // 第二次调用看不到在编辑了,把标记擦掉就会漏掉等渲染。
-  if (editing || hadNote) inputJustCommitted = true
+  if (!te?.isShowTextEdit?.()) return
+  te.hideEditTextBox()
+  // 只置真、由消费方清:提交会让库把一次渲染排到下一个宏任务,不等它画完就 setData,
+  // 两次渲染交错会把旧文档的节点叠到新文档上(两份导图同时出现在画布上)。
+  inputJustCommitted = true
 }
 
-// 立即落盘:防抖到点、切换文档、关窗前都走这里
-async function flushAutosave(): Promise<SaveStatus> {
+// 收口所有"输入中"的内容:编辑框里的文字 + 备注的 250ms 防抖
+function commitPendingInput() {
+  commitTextEdit()
+  flushNote()
+}
+
+// 立即落盘:防抖到点走 'auto';切换文档/新建前走 'switch'(会顺手提交编辑框里的文字)
+async function flushAutosave(mode: 'auto' | 'switch' = 'auto'): Promise<SaveStatus> {
   cancelAutosaveTimer()
   if (!mindMap.value) return 'clean'
-  commitPendingInput()
+  if (mode === 'switch') commitTextEdit()
+  flushNote()
   // 这个标记只对"还没有路径的文档"有意义,有路径的文档没有理由跳过保存
   if (autosavePaused && !filePath.value) return 'canceled'
   let status: SaveStatus = 'clean'
@@ -252,7 +254,7 @@ async function flushAutosave(): Promise<SaveStatus> {
 // 换文档/新建之前:先把这一份落盘。写不进去就不要继续了 —— 一旦 setData 换了文档,
 // 内存里这份未落盘的改动就再也找不回来,只能让用户在提示条上明确决定。
 async function ensureSavedBeforeSwitch(): Promise<boolean> {
-  const st = await flushAutosave()
+  const st = await flushAutosave('switch')
   if (st === 'failed' && !allowDiscardOnce) return false
   if (st === 'failed' && allowDiscardOnce) {
     allowDiscardOnce = false
@@ -264,6 +266,30 @@ async function ensureSavedBeforeSwitch(): Promise<boolean> {
   }
   return true
 }
+
+// 锁通常是瞬时的(杀软扫盘、别的程序正在读)。提示条挂着期间定期再试一次,
+// 免得用户必须回来点按钮;一旦保存成功 saveProblem 清空,轮询自然停止。
+const SAVE_POLL_DELAY = 5000
+let savePoll: ReturnType<typeof setTimeout> | null = null
+
+function armSavePoll() {
+  if (savePoll) return
+  savePoll = setTimeout(async () => {
+    savePoll = null
+    if (!saveProblem.value) return
+    await flushAutosave()
+    if (saveProblem.value) armSavePoll()
+  }, SAVE_POLL_DELAY)
+}
+
+watch(saveProblem, (p) => {
+  if (p) {
+    armSavePoll()
+  } else if (savePoll) {
+    clearTimeout(savePoll)
+    savePoll = null
+  }
+})
 
 // 等库把"刚提交的那笔改动"渲染完再换文档。渲染是 setTimeout(0) 排队的,且 _render 期间
 // 会改写节点缓存;在飞的时候 setData 会让两次渲染交错,上一份文档的节点不被销毁,
@@ -401,8 +427,9 @@ async function writeSave(as: boolean): Promise<SaveStatus> {
   const mm = mindMap.value
   if (!desktop || !mm) return 'failed'
   cancelAutosaveTimer()
-  // 备注防抖与编辑框里的文字要先落回数据,否则这一次快照里没有它们
-  commitPendingInput()
+  // 备注防抖里的文字要先落回节点,否则这一次快照里没有它;
+  // 编辑框里的节点文字**不在这里收口**,见 commitTextEdit 的注释
+  flushNote()
   let target: string | null = as ? null : filePath.value
   const { full, base } = currentSnapshot()
   let res: { canceled: boolean; filePath?: string; error?: string } = { canceled: true }
@@ -506,7 +533,10 @@ function flushNote() {
   if (!pendingNote) return
   const { node, text } = pendingNote
   pendingNote = null
-  if (node) node.setNote(text)
+  if (!node) return
+  node.setNote(text)
+  // 写备注同样会让库排一次渲染,换文档前要跟编辑框一样等它画完
+  inputJustCommitted = true
 }
 
 function closeCtxMenu() {
@@ -625,6 +655,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelAutosaveTimer()
+  if (savePoll) clearTimeout(savePoll)
   window.removeEventListener('mousedown', onDocMousedown, true)
   window.removeEventListener('wheel', closeCtxMenu, { capture: true })
   window.removeEventListener('keydown', onDocKeydown)

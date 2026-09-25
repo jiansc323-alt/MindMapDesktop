@@ -145,13 +145,17 @@
 
 ### 4.3 自动保存与文件操作
 - **没有任何"保不保存"弹窗**:改动由 `scheduleAutosave()` 防抖 **800ms** 静默写回当前文件;`dirty` 圆点仅表示"还有改动没落盘"。
-- **`commitPendingInput()` 是所有"取数据"动作的前置**(切文档、新建、保存、导出、关窗):
+- **`commitTextEdit()` 只在"这份内容马上会被覆盖/销毁"的路径上调用**(切文档、新建、导出、关窗)。
+  **平时自动保存绝不能调它**:v0.2.1 把它放进了 `flushAutosave`/`writeSave`,于是"回车新建节点 → `data_change` → 800ms 防抖到点 →
+  强制 `hideEditTextBox()`",用户字还没敲完编辑框就被关掉(实测:约 510ms 时 `display:none`,只提交了"完整的节"四个字)。
+  现在的分工:`flushAutosave('auto')` 只做 `flushNote()`;`flushAutosave('switch')` 才 `commitTextEdit() + flushNote()`。
+- **`commitPendingInput()` = `commitTextEdit() + flushNote()`**,给上面那些破坏性路径用:
   - 库把正在编辑的节点文字留在 `div.smm-node-edit-wrap` 里,只有 `draw_click` / `body_click` / `svg_mousedown` /
     `before_node_active` / `mousewheel` / Enter / Tab 才会 `execCommand('SET_NODE_TEXT')` 提交,**没有 blur 兜底**。
     原生菜单切换、Ctrl+O、拖拽进窗口这些方式不产生 DOM 点击,所以必须主动调
     `mindMap.renderer.textEdit.hideEditTextBox()` 收口,否则改动压根没进模型,自动保存"看起来没东西要存"。
   - 备注另有 **250ms** 应用侧防抖(`pendingNote` + `noteTimer`),`flushNote()` 必须在比较脏标记之前跑。
-  - 因此 `flushAutosave()` 的顺序是:`cancelAutosaveTimer → commitPendingInput → syncDirty → 写盘`。
+  - 因此 `flushAutosave()` 的顺序是:`cancelAutosaveTimer → (switch: 提交编辑框) → flushNote → syncDirty → 写盘`。
     (顺序反了就退化成"备注没进快照 → 不判脏 → 直接 return → 改动写进已销毁的节点",v0.2.0 就是这样丢的。)
 - `flushAutosave(): Promise<SaveStatus>`(`'ok' | 'clean' | 'canceled' | 'failed'`):
   - 循环"比快照 → 写",写完再比一次,消掉两种竞态:库把 `addHistory`/`data_change` 节流 100ms 所以防抖没排上,以及"边写边改"。
@@ -169,6 +173,8 @@
   - 仍失败 → `saveProblem = { path, error }`,画布上方浮一条 `SaveBanner`(不占布局、非模态):
     **重试保存 / 另存为副本 / 仍要切换(丢弃)**;`ensureSavedBeforeSwitch()` 在 `failed` 且未点"仍要切换"时**中止这次切换**,
     因为 `setData` 一换文档,内存里那份没落盘的改动就再也拿不回来了。成功后 `saveProblem` 自动清空。
+  - `saveProblem` 挂着时每 **5s** 自动再试一次(`armSavePoll`),文件解除占用后无需点按钮就能补上,实测解锁后自动写成功、
+    提示条自行消失;任何一次成功保存都会清空 `saveProblem` 从而停止轮询。
 - **切换文档前要等渲染落定**:`settleRender()` —— 刚提交的编辑会触发一次渲染(`Render.render` 是 `setTimeout(0)` 排队,
   `_render` 期间会换掉 `nodeCache`/`lastNodeCache`);在它没画完时 `setData(新文档)`,两次渲染交错,旧文档的节点不会被销毁,
   画布上出现**两份导图重叠**(实测:START→START→END,n=5)。所以 `commitPendingInput()` 若真的提交了东西
@@ -442,6 +448,8 @@
 - [x] 切换文档前统一收口"输入中"的内容(编辑框里的节点文字 + 备注防抖),再比较脏标记再落盘
 - [x] 写盘失败不再静默:自动重试 2 次 → 非模态提示条(重试 / 另存为副本 / 明确丢弃)+ 拦住这次切换
 - [x] 自动快照:每次成功保存留一份到 `userData/snapshots/`,每个文件保留最近 20 份,菜单可直达该目录
+- [x] 写盘失败期间每 5s 自动重试,锁释放后自己补写并收起提示条(不用用户回来点按钮)
+- [x] 修回归:自动保存不再强制关闭节点文字编辑框(v0.2.1 会在用户敲到一半时退出编辑)
 - [x] `autosavePaused` 只约束未命名文档,且换文档/新建一律复位(修:取消过一次"另存为"后所有文档都不再自动保存)
 
 ## 10. 已知限制 / 待办
@@ -455,7 +463,7 @@
 - 打开文件时**不恢复文件里存的 view**(缩放/平移),每次打开都重新 `view.fit()` 居中;想固定视图位置需要改回读取 `view`。
 - 自动保存按"最后写入者胜出",**未做冲突检测**:同一文件被两个窗口(或官方版 web)同时编辑时,后落盘的一方会覆盖另一方;也没有监听外部修改。
 - 未命名文档若首次改动的"另存为"被取消,该文档后续改动不再自动保存(有路径的文档不受影响;换文档/新建即复位)。
-- 写盘一直失败时**不会自动退出或强存**:切换文档会被提示条拦住,但直接杀进程/关窗(同步保存也失败)仍会丢掉最后一次改动,
+- 写盘一直失败时**不会自动退出或强存**:切换文档会被提示条拦住(每 5s 自动重试一次),但直接杀进程/关窗(同步保存也失败)仍会丢掉最后一次改动,
   此时只能去 `userData/snapshots/` 取上一份快照。
 - 快照只在"保存成功"时产生,所以最多回退到**上一次成功落盘**的版本;它不是版本历史浏览器,没有对比/回滚 UI。
 - 启动恢复与"最近打开"**不校验文件是否仍存在**:上次打开的文件被删掉或移走后,冷启动会弹一次"文件解析失败:…ENOENT"。
@@ -475,3 +483,6 @@
 - **v0.2.1**(自动保存不再丢改动):Release 已发布 `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.1`
   (Latest),附件 `MindMapDesktop-portable-0.2.1.exe`(106,652,134 B / sha256 `95addf52…aa257648`)。收口"输入中"的节点文字与备注 → 再比较脏标记 → 再落盘;写盘失败区分"取消/错误"、自动重试并浮出提示条且拦住切换;`autosavePaused` 只约束未命名文档并随切换复位;每次成功保存留快照到 `userData/snapshots/`。
   回归用例(全部跑在打包产物 + 隔离 profile 上):编辑中切文档保住、备注 30ms 内切走保住、文件被锁时切换被拦住且解锁后自动补写成功、快速来回切换不串档、导入五份样例仍不判脏、两份图不再重叠。
+- **v0.2.2**(修 v0.2.1 的回归):自动保存不再强制关闭正在输入的节点文字编辑框(收口只在切文档/新建/导出/关窗做),写失败提示条挂着时每 5s 自动重试。
+  Release `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.2`,附件 `MindMapDesktop-portable-0.2.2.exe`(106,653,877 B / sha256 `7e3c110f…556ac35c`)。
+  用 CDP 真实按键事件在**两个版本的打包产物**上对照过:0.2.1 回车后约 1s 编辑框消失、输入全丢;0.2.2 连续输入 4s 全程在编辑,提交后文字完整。
