@@ -37,47 +37,87 @@ const preset = (name: string, label: string, config: Record<string, any>): Theme
   config: withNodeSpacing(config),
 })
 
+// mac 观感的两个预设共用一套"形状"参数:曲线连线、更大的节点圆角、更宽的内边距。
+// 描边与连线取深灰近黑,比纯黑柔和,在浅色画布上仍是明确的线条。
+const macShape = {
+  lineStyle: 'curve',
+  lineWidth: 1,
+  paddingX: 14,
+  paddingY: 6,
+}
+const macNodeRadius = { borderRadius: 8, hoverRectRadius: 8 }
+
 export const themePresets: ThemePreset[] = [
   preset(
     'default',
     '默认(浅)',
     {
-      backgroundColor: '#fafafa',
-      lineColor: '#000000',
-      generalizationLineColor: '#000000',
+      ...macShape,
+      backgroundColor: '#f5f5f7',
+      lineColor: '#3a3a3c',
+      generalizationLineColor: '#3a3a3c',
       root: {
+        ...macNodeRadius,
         fillColor: '#ffffff',
-        color: '#000000',
+        color: '#1d1d1f',
+        // 根节点不加粗是本客户端的固定要求
         fontWeight: 'normal',
         fontSize: 18,
-        borderColor: '#000000',
+        borderColor: '#3a3a3c',
         borderWidth: 1,
       },
       second: {
+        ...macNodeRadius,
         fillColor: '#ffffff',
-        color: '#333333',
+        color: '#3a3a3c',
         fontSize: 16,
-        borderColor: '#000000',
+        borderColor: '#3a3a3c',
         borderWidth: 1,
       },
+      // 三级及以下同样带边框,不能只靠连线区分层级
       node: {
+        ...macNodeRadius,
         fillColor: '#ffffff',
-        color: '#333333',
+        color: '#3a3a3c',
         fontSize: 14,
-        borderColor: '#000000',
+        borderColor: '#3a3a3c',
         borderWidth: 1,
       },
     },
   ),
   preset(
     'dark',
-    '深色',
+    '默认(深)',
     {
-      backgroundColor: '#1e1e1e',
-      lineColor: '#4a90d9',
-      root: { fillColor: '#2d2d2d', color: '#e8e8e8', borderColor: '#4a90d9', borderWidth: 1 },
-      second: { fillColor: '#2d2d2d', color: '#cfcfcf', borderColor: '#4a4a4a', borderWidth: 1 },
-      node: { color: '#b5b5b5' },
+      ...macShape,
+      backgroundColor: '#1e1f24',
+      lineColor: '#98989d',
+      generalizationLineColor: '#98989d',
+      root: {
+        ...macNodeRadius,
+        fillColor: '#2c2d33',
+        color: '#f5f5f7',
+        fontWeight: 'normal',
+        fontSize: 18,
+        borderColor: '#98989d',
+        borderWidth: 1,
+      },
+      second: {
+        ...macNodeRadius,
+        fillColor: '#2c2d33',
+        color: '#e4e4e9',
+        fontSize: 16,
+        borderColor: '#636368',
+        borderWidth: 1,
+      },
+      node: {
+        ...macNodeRadius,
+        fillColor: '#26272c',
+        color: '#c7c7cc',
+        fontSize: 14,
+        borderColor: '#636368',
+        borderWidth: 1,
+      },
     },
   ),
   preset(
@@ -103,3 +143,13 @@ export const themePresets: ThemePreset[] = [
     },
   ),
 ]
+
+// 新建文档、以及 theme.config 为空的旧文件按系统深浅挑默认预设:
+// 外壳是 CSS 媒体查询自动跟随的,画布是 JS 主题,只能在"选文档"这一刻决定。
+export function systemIsDark(): boolean {
+  return !!window.matchMedia?.('(prefers-color-scheme: dark)').matches
+}
+
+export function preferredPreset(): ThemePreset {
+  return themePresets.find((p) => p.name === (systemIsDark() ? 'dark' : 'default')) ?? themePresets[0]
+}

@@ -29,57 +29,67 @@ function onInput(e: Event) {
 
 <style scoped>
 .note-sidebar {
-  width: 260px;
+  width: 268px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid #e5e5e5;
-  background: #fafafa;
+  border-left: 1px solid var(--hairline);
+  background: var(--bar);
   overflow: hidden;
 }
 .note-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
-  padding: 0 10px;
-  font-size: 13px;
-  color: #666;
-  border-bottom: 1px solid #eee;
+  height: 38px;
+  padding: 0 8px 0 12px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text2);
   flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .hide-btn {
   border: none;
   background: none;
   cursor: pointer;
-  color: #999;
+  color: var(--text3);
   font-size: 14px;
   line-height: 1;
-  padding: 2px 4px;
+  padding: 3px 6px;
+  border-radius: var(--r-sm);
+  flex: none;
 }
 .hide-btn:hover {
-  color: #409eff;
+  background: var(--hover);
+  color: var(--text);
 }
 .note-input {
   flex: 1;
-  margin: 8px;
-  padding: 8px;
-  font-size: 13px;
+  margin: 0 10px 10px;
+  padding: 8px 10px;
+  font-size: var(--fs-md);
   line-height: 1.6;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
   resize: none;
   outline: none;
-  font-family: inherit;
-  color: #333;
-  background: #fff;
+  color: var(--text);
+  background: var(--elev);
+  caret-color: var(--accent);
 }
-.note-input:focus {
-  border-color: #409eff;
+.note-input::placeholder {
+  color: var(--text3);
+}
+.note-input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--tint);
 }
 .empty {
-  padding: 16px 10px;
-  font-size: 12px;
-  color: #bbb;
+  padding: 16px 12px;
+  font-size: var(--fs-sm);
+  color: var(--text3);
 }
 </style>

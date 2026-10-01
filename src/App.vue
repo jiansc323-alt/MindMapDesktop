@@ -6,7 +6,7 @@ import NoteSidebar from './components/NoteSidebar.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import SaveBanner from './components/SaveBanner.vue'
 import { useMindMap, defaultData } from './composables/useMindMap'
-import { themePresets, withNodeSpacing } from './composables/themes'
+import { themePresets, withNodeSpacing, preferredPreset } from './composables/themes'
 import { exportJpeg, exportPdf } from './composables/rasterExport'
 import {
   dataUrlToBase64,
@@ -30,7 +30,8 @@ const title = ref('未命名')
 const dirty = ref(false)
 const recent = ref<string[]>([])
 const sidebarVisible = ref(true)
-const currentTheme = ref('default')
+// 初始回显要和 useMindMap 里首次套用的预设一致,否则下拉框会显示成另一个主题
+const currentTheme = ref(preferredPreset().name)
 const noteVisible = ref(false)
 const currentNote = ref('')
 const activeNode = shallowRef<any>(null)
@@ -157,8 +158,9 @@ function applyPresetTheme(name: string) {
   currentTheme.value = name
 }
 
+// 新建/导入出来的文档没有自己的主题,按系统深浅挑 mac 浅/深预设
 function applyDefaultTheme() {
-  applyPresetTheme(themePresets[0].name)
+  applyPresetTheme(preferredPreset().name)
 }
 
 function applyParsed(parsed: any) {
@@ -170,7 +172,7 @@ function applyParsed(parsed: any) {
   mm.setTheme(parsed.theme?.template || 'default')
   const cfg = parsed.theme?.config
   // 旧文件 theme.config 为空,代表"未自定义",应套用应用默认预设而非库内置样式
-  const effective = cfg && Object.keys(cfg).length > 0 ? cfg : themePresets[0].config
+  const effective = cfg && Object.keys(cfg).length > 0 ? cfg : preferredPreset().config
   // 间距由本客户端统管:文件里存的是当时生效的(可能是库默认的)小间距
   const spaced = withNodeSpacing(effective)
   mm.setThemeConfig(spaced)

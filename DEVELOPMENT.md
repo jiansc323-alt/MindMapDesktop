@@ -49,6 +49,8 @@
 
 ### 2.1 窗口
 - `createWindow()`:1280x820,最小 800x600;`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`,通过 `preload.js` 桥接。
+- `backgroundColor` 按 `nativeTheme.shouldUseDarkColors` 取 `#1e1f24` / `#f5f5f7`(与 `tokens.css` 的 `--bg` 同值):
+  窗口底色在渲染层画第一帧之前就要定,否则深色系统下启动会闪一块白底。
 - dev 加载 `VITE_DEV_SERVER_URL`,生产加载 `dist/index.html`。
 - `setWindowOpenHandler`:一律 `deny`,http(s) 链接转交 `shell.openExternal`(节点超链接在库里是 `<a target="_blank">`)。
 - `will-navigate`:阻止渲染层发起的页面导航(仅允许停留在当前 URL)。
@@ -225,8 +227,11 @@
 - 预设集中在 `src/composables/themes.ts`(见第 5 节),`Toolbar` 下拉切换。
 - `applyTheme(name)`:`setTheme('default')` + `setThemeConfig(preset.config)`,并更新 `currentTheme`。
   - 核心库仅内置 `default` 主题模板,故所有"主题"都是同一模板 + 不同自定义配置实现。
-- 打开文件时(`applyParsed`):若文件带非空 `theme.config` 则沿用,否则回退到应用默认预设 `themePresets[0].config`
+- 打开文件时(`applyParsed`):若文件带非空 `theme.config` 则沿用,否则回退到 `preferredPreset().config`
   (修复:旧文件 `theme.config` 为空导致仍显示库内置绿色/加粗样式)。
+- **默认预设跟随系统深浅**:新建、导入、以及无 `theme.config` 的文件都走 `preferredPreset()`(见 5.1),
+  而不是写死 `themePresets[0]`。外壳是 CSS 媒体查询实时跟随,画布是 JS 主题,**只能在"选文档"这一刻决定**
+  (中途跟随系统改画布主题会让文档凭空变脏并触发一次写盘,故不做)。
 - **下拉回显**:按"预设里出现的键"去比对文件 config(`matchesPreset`,忽略库默认补齐的其余键),
   命中则选中对应预设,命不中则显示额外项 **自定义(来自文件)**(`currentTheme = 'custom'`)。
 
@@ -307,14 +312,21 @@
 - `useMindMap(el)`:
   - 用 **ResizeObserver** 等容器真正有非零尺寸后再 `new MindMap(...)`,规避"CSS 晚于模块脚本生效导致容器 0 尺寸"的竞态(否则构造抛"容器元素el的宽高不能为0")。
   - 构造选项 `noteIcon: { style: { size: 12, color: '#f5a623' } }`:把备注泡泡图标从主题默认 `iconSize`(20)缩小到 12px 并着琥珀色。
-  - 初始化即 `setTheme('default') + setThemeConfig(themePresets[0].config)`,避免库内置绿色/加粗样式。
+  - 初始化即 `setTheme('default') + setThemeConfig(preferredPreset().config)`,按系统深浅避免库内置绿色/加粗样式。
   - 实例用 `shallowRef` 持有,避免 Vue 深度响应式代理大对象。
   - 卸载时 `destroy()`。
 
 ### 5.1 主题预设(`src/composables/themes.ts`)
 - 导出 `themePresets: ThemePreset[]`,每项 `{ name, label, config }`;`config` 键与 `simple-mind-map/src/theme/default.js` 一致。
-- 现有预设:**默认(浅)**、深色、经典蓝、清新绿。
-- "默认(浅)"按需求定制:根节点不加粗但字号更大(18)、二/三级节点均有黑色边框、连线与背景为浅色、连接线为黑色。
+- 现有预设:**默认(浅)**、**默认(深)**、经典蓝、清新绿。前两个是"mac 风格"的一对,后两个保持原样。
+- **mac 风格两个预设共用一套形状参数**(`macShape` / `macNodeRadius`):
+  `lineStyle: 'curve'`(曲线连线)、`lineWidth: 1`、`paddingX: 14` / `paddingY: 6`(更宽的内边距)、
+  各层级 `borderRadius: 8` + `hoverRectRadius: 8`(圆角节点与圆角选中框)。
+  - 浅:背景 `#f5f5f7`,描边与连线 `#3a3a3c`(深灰近黑,比纯黑柔和但仍够清楚),节点白底、文字 `#1d1d1f`/`#3a3a3c`。
+  - 深:背景 `#1e1f24`,节点 `#2c2d33`/`#26272c`,连线 `#98989d`,描边 `#98989d`/`#636368`。
+  - 原有硬性要求保留:**根节点不加粗**(`fontWeight:'normal'`,字号 18)、**二/三级节点都有边框**、间距见下条。
+- `preferredPreset()`:`matchMedia('(prefers-color-scheme: dark)')` 命中则返回"默认(深)",否则"默认(浅)"。
+  新建/导入/无配置的老文件都从这里取默认,`App.vue` 的 `currentTheme` 初值也取它(否则下拉回显会和画布不一致)。
 - 因核心库只内置 `default` 模板,切换主题实为 `setTheme('default') + setThemeConfig(预设 config)`。
 - **节点间距由 `nodeSpacing` 统一提供**:`second.marginY 48` / `node.marginY 20`(库默认 40 / **0**,三级及以下节点上下几乎贴在一起)。
   - 实测净间距 = `marginY + hoverRectPadding*2`(默认 `hoverRectPadding` 为 2)→ 二级约 52px、三级及以下约 24px。
@@ -337,23 +349,37 @@
 
 ## 6. 模块:UI 组件
 
+### 6.0 设计令牌与深浅色(`src/styles/tokens.css`)
+- 外壳的**唯一颜色来源**:两套 CSS 变量(浅 / 深),`@media (prefers-color-scheme: dark)` 覆盖,组件里不再写死色值。
+  - 浅:`--bg #f5f5f7`、`--bar #f2f2f4`(工具栏/侧栏)、`--elev #fff`(浮层/输入框)、`--hairline #d2d2d7`、
+    `--text #1d1d1f` / `--text2 #6e6e73` / `--text3 #a1a1a7`、`--accent #007aff`。
+  - 深:`--bg #1e1f24`、`--bar #26272c`、`--elev #2a2b30`、`--hairline #3a3c40`、`--text #f5f5f7`、`--accent #0a84ff`。
+  - 中间态用叠加色 `--hover` / `--pressed` / `--tint`,危险态 `--danger*`;圆角 `--r-sm 6 / --r-md 8 / --r-lg 12`;字号 11/12/13/15。
+- 字体栈 `-apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', …` + `body { -webkit-font-smoothing: antialiased }`:
+  Windows 上落到 Segoe UI Variable Text(最接近 SF Pro 的系统字体),中文走微软雅黑 UI 变体。
+- `index.html` 加 `<meta name="color-scheme" content="light dark">`,让原生控件(下拉、取色器、滚动条)自己跟随深浅。
+- 全局细滚动条(`::-webkit-scrollbar` 9px + `background-clip: content-box`)。
+- **画布不在这套体系里**:节点/背景颜色由 `themes.ts` 的主题预设决定(见 5.1),两者只是恰好同名同值(`--bg` ↔ 画布背景)。
+
 ### 6.1 Toolbar(`src/components/Toolbar.vue`)
 - 左侧:侧边栏开关按钮(`«`/`»`)、备注栏开关按钮("备注")、文件名 + 未保存圆点(`dirty`)。
 - 右侧:**格式**(popover 承载 `FormatPanel`,见 6.5)、主题下拉(`<select>`,选项来自 `themePresets`)、打开 / 保存 / 另存为 / **导入 ▾** / **导出 ▾**。
+- 工具栏高 46px,`--bar` 底色 + 底部 `--hairline` 分隔线;按钮**不带描边**,靠悬停 `--hover` / 按下 `--pressed` 表态,
+  展开中的下拉按钮用 `--tint` + `--accent` 文字;弹出菜单是 `--r-lg` 圆角 + `--shadow-pop`,菜单项悬停整行填 `--accent`(mac 菜单观感)。
 - 下拉菜单由单个 `openMenu`(`'' | 'import' | 'export' | 'format'`)互斥控制;`IMPORT_ITEMS`/`EXPORT_ITEMS` 两张表决定子项文案与 `import:`/`export:` 动作。
 - 格式面板挂在工具栏按钮下方的 `.tb-pop` 里(见 6.5),`window` 捕获阶段 `mousedown` 负责点外部关闭,**但 `format` 例外**(否则点节点就关面板)。
 - props:`title / dirty / sidebarVisible / theme / noteVisible / mindMap / nodes`;
   事件:`toggleSidebar / toggleNote / theme(name) / open / save / saveAs / import(kind) / export(kind)`,统一上抛给 `App.vue`。
 
 ### 6.2 Sidebar(`src/components/Sidebar.vue`)
-- 左侧固定宽 220px 面板,标题"最近打开",右上"«"隐藏按钮。
+- 左侧固定宽 224px 面板,标题"最近打开",右上"«"隐藏按钮。列表是 mac 源列表样式:行不贴边、`--r-sm` 圆角、悬停 `--hover`。
 - 列表项显示文件名 + 所在目录(完整路径作 tooltip);**双击**触发 `open(path)` 打开对应思维导图。
 - 空态显示"暂无最近文件"。
 - 数据来自 `App.vue` 的 `recent`(主进程最近列表),隐藏由 `App.vue` 的 `sidebarVisible` 控制(`v-if`)。
 - 侧边栏显隐改变画布宽度,`App.vue` 监听 `sidebarVisible` 并在 `nextTick` 调 `mindMap.resize()` 重算尺寸。
 
 ### 6.3 NoteSidebar(`src/components/NoteSidebar.vue`)
-- 右侧固定宽 260px 面板,标题"备注 · 节点名",右上"»"隐藏按钮。
+- 右侧固定宽 268px 面板,标题"备注 · 节点名",右上"»"隐藏按钮。
 - 有选中节点时显示 `<textarea>`(受控,`:value="note"` + `@input`),placeholder 提示"清空则移除备注";无选中节点显示空态"请先选中一个节点"。
 - props:`note / nodeName / hasNode`;事件:`input(text)`(→ `App.setNoteText` 防抖写回节点)、`hide`。
 - 显隐由 `App.vue` 的 `noteVisible` 控制(`v-if`);打开时 `App.vue` 在 `nextTick` 聚焦 `.note-input`。
@@ -365,14 +391,14 @@
 - 自身不做"点外部关闭",统一交给 `App.vue` 的窗口级监听;靠近视口右/下边缘时用 `MENU_W/MENU_H` 夹取坐标,避免弹出屏幕外。
 
 ### 6.5 FormatPanel(`src/components/FormatPanel.vue`)
-- 260px 宽的浮层面板,由工具栏「格式」按钮通过 `.tb-pop > .pop-panel` 承载(不在画布内,避免被 SVG 裁剪),右上 `×` 关闭。
+- 264px 宽的浮层面板,由工具栏「格式」按钮通过 `.tb-pop > .pop-panel` 承载(不在画布内,避免被 SVG 裁剪),右上 `×` 关闭。
 - 分组:**文本**(加粗 / 斜体 / 字号步进器 / 字体下拉 / 文字色)、**节点**(填充色 / 边框色 / 边框宽度)、底部「恢复默认样式」+ 多选计数。
 - 未选中节点时显示空态提示("请先在画布上选择一个节点",并提示 Ctrl 多选可批量)。
 - props:`mindMap / nodes`(节点数组,来自 `App.vue` 的 `activeNodes`);事件:`close`。
 - 行为细节与实现约束见 4.13。
 
 ### 6.6 SaveBanner(`src/components/SaveBanner.vue`)
-- 写盘失败时浮在画布顶部(`position:absolute`,不占布局,免得触发画布 resize),红底一行 + 三个动作。
+- 写盘失败时浮在画布顶部(`position:absolute`,不占布局,免得触发画布 resize),危险色圆角浮层一行 + 三个动作。
 - props:`path / error`;事件:`retry`(重试当前路径)、`saveAs`(另存为副本,成功即视为脱离困境)、`discard`(置 `allowDiscardOnce`,明确允许下一次切换丢弃未保存改动)。
 - 只在 `saveProblem` 非空时由 `App.vue` 用 `v-if` 挂出;任何一次成功保存都会把它清空,不需要用户点"关闭"。
 - 它是**非模态**的:不拦编辑操作,只拦"换文档"(见 4.3 的 `ensureSavedBeforeSwitch`)。
@@ -396,6 +422,15 @@
 - 打包注意:Windows 上偶发 `EPERM: rename win-unpacked.tmp -> win-unpacked`(多为 Defender 实时扫描锁住刚解出的 `electron.exe`)。
   处理:关闭占用 `release/` 的进程/资源管理器窗口、删除残留 `release/win-unpacked.tmp` 后重跑 `npx electron-builder --win portable` 即可。
   **别并发跑两次打包**:第二次会因 `release/win-unpacked` 被第一次占着而报 `EBUSY: resource busy or locked, rmdir`,产物目录还可能被误删。
+- **⚠ 产物不能就地双击运行(如果工作区被 agent 沙箱接管)**:agent 工作区目录下的文件会继承
+  `Mandatory Label\Low Mandatory Level` 与 `CodexSandboxUsers` / capability SID 一类 ACE,Electron 的进程沙箱在这种目录里引导子进程会直接失败,
+  现象是**双击没反应、窗口不出现、进程秒退**,`--enable-logging=stderr` 只能看到 `Received fatal exception EXCEPTION_BREAKPOINT`,
+  而且 `main.js` 一行都不会执行(所以任何"在应用代码里加启动日志"的排查方向都是死路)。
+  - 判定方法:把同一个 exe 复制到 `%TEMP%` 再跑 —— 能起来就说明是**目录标签**问题而不是代码问题。
+    对照实验要同时换 exe 位置与 `--user-data-dir` 位置:实测只有 **exe 自身所在位置**决定成败。
+  - 交付办法:把 `release/MindMapDesktop-portable-<version>.exe` **复制到工作区外的普通目录**(如 `Documents\MindMap\`、桌面)再运行;
+    或直接从 GitHub Release 下载(下载落地的文件标签正常)。agent 侧一般也写不了工作区外,需要用户手动复制。
+  - 开发模式不受影响:`npm run dev` 由 vite 常驻拉起 Electron,不走 portable stub。
 
 ---
 
@@ -451,6 +486,8 @@
 - [x] 写盘失败期间每 5s 自动重试,锁释放后自己补写并收起提示条(不用用户回来点按钮)
 - [x] 修回归:自动保存不再强制关闭节点文字编辑框(v0.2.1 会在用户敲到一半时退出编辑)
 - [x] `autosavePaused` 只约束未命名文档,且换文档/新建一律复位(修:取消过一次"另存为"后所有文档都不再自动保存)
+- [x] mac 风格外壳:设计令牌 `tokens.css` + 浅色/深色两套,**跟随系统自动切换**(含原生控件与滚动条),窗口底色同步避免启动闪白
+- [x] 画布默认主题重做为 mac 观感的"默认(浅)/默认(深)"一对(曲线连线、圆角节点、深灰描边 `#3a3a3c`),新建与无配置的老文件按系统深浅自动挑
 
 ## 10. 已知限制 / 待办
 
@@ -474,6 +511,12 @@
 - `index.html` 未加 CSP 元标签;主进程未做单实例锁(portable exe 可多开)。
 - "已完成"对勾写的是自定义节点字段 `data.data.done`,**官方 web 版不认这个字段**,同一文件在官方版里打开不会显示对勾(数据不丢,回到本客户端仍生效)。
 - 仓库根目录留有测试数据 `123.smm`、`12345.smm`(本地个人内容,已在 `.gitignore` 里排除,不入库)。
+- 外壳深浅色跟随系统**实时**切换(CSS 媒体查询),画布主题只在"新建/打开文档"那一刻按系统深浅决定;
+  系统偏好中途翻转不会改画布 —— 让它跟随等于替用户改写文档主题并触发一次落盘,不做。
+- 用旧版"默认(浅)/深色"预设存下来的 `.smm`,其 `theme.config` 与新预设不再逐键相同,工具栏下拉会显示 **自定义(来自文件)**;
+  想要新观感需手动重选一次预设(数据不受影响)。
+- 从 agent 沙箱工作区里直接双击 portable exe **不会启动**(目录带了低完整性标签,Electron 沙箱引导子进程失败),
+  必须复制到工作区外的普通目录再从那里运行,详见第 7 节末尾。
 - 已发布:`https://github.com/jiansc323-alt/MindMapDesktop`(public,`main` 分支),首个 Release **v0.1.0** 附 portable exe。
 - 免安装单 exe:`release/MindMapDesktop-portable-0.1.0.exe`(101.6 MiB / sha256 `b65a6ae1…e6c307`,内含 Electron 运行时),已包含自动保存 + 打开自动居中、右键完成标记、加大间距;合规文件(`LICENSE`、`THIRD-PARTY-NOTICES.md`)随包附带于 `resources/`。
 - **v0.2.0**(格式面板 + 导入/导出 md/xmind/opml + png/jpg/svg/pdf 导出):Release 已发布

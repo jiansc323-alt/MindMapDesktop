@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import syncFs from 'node:fs'
@@ -8,6 +8,10 @@ process.env.DIST = path.join(__dirname, '../dist')
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 let win: BrowserWindow | null = null
+
+// 与 styles/tokens.css 的 --bg 同值:窗口底色在渲染层画第一帧之前就要定,
+// 否则深色系统下启动会闪一块白底
+const WINDOW_BG = { light: '#f5f5f7', dark: '#1e1f24' }
 
 interface AppState {
   recent: string[]
@@ -142,6 +146,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     title: '思维导图',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

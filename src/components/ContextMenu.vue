@@ -27,26 +27,26 @@ const top = computed(() => Math.max(4, Math.min(props.y, window.innerHeight - ME
   position: fixed;
   z-index: 1000;
   min-width: 150px;
-  padding: 4px;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+  padding: 5px;
+  background: var(--elev);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
 }
 .ctx-item {
   display: block;
   width: 100%;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-align: left;
-  color: #333;
+  color: var(--text);
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .ctx-item:hover {
-  background: #eef5ff;
-  color: #409eff;
+  background: var(--accent);
+  color: #fff;
 }
 </style>

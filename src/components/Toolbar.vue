@@ -137,109 +137,121 @@ onBeforeUnmount(() => window.removeEventListener('mousedown', onDocMousedown, tr
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: 46px;
   padding: 0 12px;
-  border-bottom: 1px solid #e5e5e5;
-  background: #fafafa;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bar);
   flex-shrink: 0;
 }
 .left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
-.icon-btn {
-  border: 1px solid #d0d0d0;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  color: #666;
-  font-size: 13px;
-  line-height: 1;
-  padding: 5px 8px;
+.actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
+/* mac 工具栏:控件不带描边,靠悬停底色表态 */
+button,
+.icon-btn {
+  font-size: var(--fs-md);
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.icon-btn {
+  padding: 5px 9px;
+  color: var(--text2);
+}
+button:hover,
 .icon-btn:hover {
-  border-color: #409eff;
-  color: #409eff;
+  background: var(--hover);
+}
+button:active,
+.icon-btn:active {
+  background: var(--pressed);
+}
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+button.active {
+  background: var(--tint);
+  color: var(--accent);
 }
 .file-name {
-  font-size: 13px;
-  color: #333;
+  margin-left: 4px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 .dot {
   color: #f5a623;
   font-style: normal;
   font-size: 10px;
 }
-.actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
 .theme-select {
-  font-size: 13px;
+  font-size: var(--fs-md);
   padding: 5px 8px;
-  border: 1px solid #d0d0d0;
-  background: #fff;
-  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  background: var(--elev);
+  border-radius: var(--r-md);
   cursor: pointer;
-  color: #333;
+  color: var(--text);
 }
 .theme-select:hover {
-  border-color: #409eff;
+  border-color: var(--text2);
 }
-button {
-  font-size: 13px;
-  padding: 5px 12px;
-  border: 1px solid #d0d0d0;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-}
-button:hover {
-  border-color: #409eff;
-  color: #409eff;
-}
-button.active {
-  border-color: #409eff;
-  color: #409eff;
-  background: #eef5ff;
+.theme-select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .tb-pop {
   position: relative;
 }
 .pop-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
   z-index: 30;
-  min-width: 150px;
+  min-width: 168px;
   margin: 0;
-  padding: 4px 0;
+  padding: 5px;
   list-style: none;
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  background: var(--elev);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
 }
 .pop-menu li {
-  padding: 6px 12px;
-  font-size: 13px;
-  color: #333;
+  padding: 6px 10px;
+  font-size: var(--fs-md);
+  color: var(--text);
+  border-radius: var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
 }
+/* 菜单项整行高亮成主题色,是 mac 菜单最明显的特征 */
 .pop-menu li:hover {
-  background: #eef5ff;
-  color: #409eff;
+  background: var(--accent);
+  color: #fff;
 }
 .pop-panel {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   left: 0;
   z-index: 30;
 }

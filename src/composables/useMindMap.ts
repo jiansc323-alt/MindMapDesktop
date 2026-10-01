@@ -5,7 +5,7 @@ import ExportXMind from 'simple-mind-map/src/plugins/ExportXMind.js'
 import Select from 'simple-mind-map/src/plugins/Select.js'
 import Drag from 'simple-mind-map/src/plugins/Drag.js'
 import KeyboardNavigation from 'simple-mind-map/src/plugins/KeyboardNavigation.js'
-import { themePresets } from './themes'
+import { preferredPreset } from './themes'
 
 // ExportPDF 不注册:PDF 由 composables/rasterExport.ts 直接产出 A4 页面
 MindMap.usePlugin(Export)
@@ -78,9 +78,9 @@ export function useMindMap(el: Ref<HTMLElement | undefined>) {
         createNodePostfixContent: (node: any) =>
           node.getData('done') ? createDoneMark() : null,
       })
-      // 启动即应用"默认(浅)"预设,而非库内置的绿/加粗样式
+      // 启动即按系统深浅套用 mac 预设,而非库内置的绿/加粗样式
       mindMap.value.setTheme('default')
-      mindMap.value.setThemeConfig(themePresets[0].config)
+      mindMap.value.setThemeConfig(preferredPreset().config)
       observer?.disconnect()
       observer = null
     })
