@@ -538,3 +538,9 @@
 - **v0.2.2**(修 v0.2.1 的回归):自动保存不再强制关闭正在输入的节点文字编辑框(收口只在切文档/新建/导出/关窗做),写失败提示条挂着时每 5s 自动重试。
   Release `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.2.2`,附件 `MindMapDesktop-portable-0.2.2.exe`(106,653,877 B / sha256 `7e3c110f…556ac35c`)。
   用 CDP 真实按键事件在**两个版本的打包产物**上对照过:0.2.1 回车后约 1s 编辑框消失、输入全丢;0.2.2 连续输入 4s 全程在编辑,提交后文字完整。
+- **v0.3.0**(mac 风格界面 + 深浅色跟随系统 + 打包瘦身):Release 已发布
+  `https://github.com/jiansc323-alt/MindMapDesktop/releases/tag/v0.3.0`,附件 `MindMapDesktop-portable-0.3.0.exe`
+  (92,605,022 B / sha256 `b7283414…e22f62f`,与本地产物一致)。
+  外壳改为 `src/styles/tokens.css` 的两套变量并跟随系统深浅;画布预设重做为"默认(浅)/默认(深)";新建与无 `theme.config` 的老文件按系统深浅挑预设。
+  打包排除 `node_modules`(`app.asar` 84 MB → 2 MB)并只保留中/英文 `locales`(49 MB → 2 MB),exe 101.7 MB → 88.3 MB,冷启动到首帧 6.2 s → 5.4 s。
+  在**打包产物 + 隔离 profile** 上复验:浅/深两态截图与计算样式核对、自动保存回归三项、导入五份样例不判脏,均通过且无渲染层异常。
