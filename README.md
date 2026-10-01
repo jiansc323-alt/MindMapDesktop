@@ -11,7 +11,7 @@
 到 [Releases](releases) 下载 `MindMapDesktop-portable-<version>.exe`,**双击即用**,不需要安装、不需要管理员权限,配置和数据不会写进 Program Files。
 
 - 未做代码签名:首次运行 Windows SmartScreen 可能弹"已保护你的电脑 → 更多信息 → 仍要运行"。
-- 单个 exe 约 100 MB,因为内含 Electron 运行时。
+- 单个 exe 约 88 MB,内含 Electron 运行时;首次启动需解压到临时目录,约 5 秒出画面。
 
 ## 功能
 

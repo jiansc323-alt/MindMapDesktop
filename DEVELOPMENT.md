@@ -409,6 +409,15 @@
 
 - `vite.config.mts`:`base: './'`(保证 Electron `loadFile` 相对路径可用);`vite-plugin-electron/simple` 编排 main/preload;渲染产物 `dist/`,主进程/preload 产物 `dist-electron/`。
 - `electron-builder.yml`:`win.target: portable` → 单个免安装 exe;产物 `release/MindMapDesktop-portable-<version>.exe`。
+  - **`files` 里显式排除 `node_modules`**:渲染层由 Vite 打成自包含的 `dist/`,主进程/preload 只 `require('electron')` 与 node 内置模块
+    (改打包配置后要 `grep -o 'require("[^"]*")' dist-electron/*.js` 复核一遍),所以依赖树完全不必进包。
+    不排除时 `app.asar` 有 **84 MB**(pdf-lib / quill / katex / yjs / babel / tern … 全是核心库的传递依赖),排除后 **2 MB**。
+  - **`electronLanguages: ['zh-CN','en-US']`**:Chromium 的 `locales/` 从 55 个 pak(49 MB)缩到 2 个(2 MB);完整 `icudtl.dat` 保留,`Intl`/日期格式化不受影响。
+  - 实测效果:portable exe **101.7 MB → 88.3 MB**,冷启动到画布首帧 **6.2 s → 5.4 s**。
+    剩下约 4.5 s 全在 portable stub 往 `%TEMP%` 解包 Electron 运行时(直接跑 `win-unpacked/MindMapDesktop.exe` 只要 0.6~1.0 s),
+    这是"单个免安装 exe"这个硬约束的固定代价;渲染层自身只占约 0.4 s。
+  - **试过 `portable.unpackDirName`(固定解包目录以图复用):无效** —— 第二次启动并不更快(stub 每次仍校验/重解),反而在 `%TEMP%` 常驻 322 MB 副本,已回退。
+  - 想再快只能牺牲体积:`compression` 从 maximum 降到 store(解包变纯复制),exe 会涨到 300 MB 级,不划算。
   - `extraResources` 随包附带 `LICENSE` 与 `THIRD-PARTY-NOTICES.md`(解包后位于 `resources/`),履行 MIT 归属义务。
   - `copyright` / `package.json.author` 已设置,避免 builder 告警。
 - `.npmrc`:Electron 二进制与 builder 二进制走 npmmirror 镜像(本机直连 GitHub releases 会失败)。

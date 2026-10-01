@@ -3,9 +3,18 @@ productName: MindMapDesktop
 copyright: Copyright (c) 2026 MindMap Desktop contributors
 directories:
   output: release
+# 渲染层由 Vite 打成 dist/ 自包含产物,主进程/preload 只依赖 electron 与 node 内置模块,
+# 所以 node_modules 不需要进包 —— 不排除的话 app.asar 会白白胖 80 多 MB。
 files:
   - dist/**/*
   - dist-electron/**/*
+  - package.json
+  - '!node_modules/**'
+  - '!**/node_modules/**'
+# 只保留中/英文的 Chromium 语言包(locales 目录从 55 个 pak 缩到 2 个)
+electronLanguages:
+  - zh-CN
+  - en-US
 extraResources:
   - from: LICENSE
     to: LICENSE
@@ -16,3 +25,5 @@ win:
     - portable
 portable:
   artifactName: ${productName}-portable-${version}.exe
+  # 试过 unpackDirName(固定解包目录):实测第二次启动并不更快(stub 每次仍校验/重解),
+  # 反而在 %TEMP% 常驻 322MB 解包副本,故不设。
